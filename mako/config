@@ -1,0 +1,55 @@
+# Tahoe OS White Frosted Glass Notification Configuration
+
+# --- Global Style & Geometry ---
+font=Inter Semibold 10
+width=360
+height=110
+margin=20
+padding=16
+border-size=1
+border-radius=12
+
+# Colors (Translucent Frosted Light Theme)
+# Pure crisp white background with high alpha transparency 
+background-color=#F3F4F6D5
+text-color=#1F2937
+border-color=#0000001A
+
+# --- Layout & Icon Behavior ---
+# Enables the app icons cleanly to the left just like the screenshot
+icons=1
+max-icon-size=36
+icon-location=left
+
+# Expiration defaults
+default-timeout=5000
+ignore-timeout=0
+
+# --- Interactive Actions ---
+# Left click opens the application; Right click cancels/dismisses it
+on-button-left=invoke-default-action
+on-button-right=dismiss
+
+# A single left click activates/opens the notification's action (e.g., opens a link or app)
+on-button-left=invoke-action default
+
+# A quick secondary touch/click dismisses (snoozes) the notification
+on-touch=dismiss
+
+# --- Typography & Formatting ---
+# Replicates the thick title and secondary text layout
+format=<b>%s</b>\n<span foreground='#4B5563'>%b</span>
+
+# --- Stacking Configuration ---
+max-visible=3
+sort=-time
+
+# --- Urgency Profiles ---
+[urgency=low]
+border-color=#0000000F
+default-timeout=3000
+
+[urgency=high]
+border-color=#EF444499
+text-color=#991B1B
+default-timeout=0
