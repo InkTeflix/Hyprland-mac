@@ -9,7 +9,30 @@
 6. *nwg-dock-hyprland* -for dock.
 7. *apple-fonts* -for ttf (usually, things will go smoothly even with).
 
-## Manual changes
+## Extra changes
 
-Its is recommended, after coping the repo/file, you change the directory of the files.
-Specifically, you can copy/cut paste the launchpad folder as it is inside the $HOME/.config/ (so the key binds and the shortcut locations don't have to be changed manually, which is harder.
+This configurations(beta) are being provided considering that the user may want try it, and are thus made using different directories then the default ones. Anything, will not make any permanent changes to the system.
+> [!TIP]
+> To completely remove the configurations from system, just remove the ~/.config/hypr-mac directory (if it was created) and/or the custom desktop entry at /use/share/wayland-sessions/hyprland-mac.desktop (if it was created).
+
+> [!WARNING]
+> It is highly _unrecommened_ to run the script with sudo privilege (root).
+> Only give the access at the time of desktop file creation.
+
+<details>
+<summary><b>Safety precautions for testing purpose</b></summary>
+It is recommended, that you create a new desktop session entry. That way you can test this,or any other dot file,without messing with your current configurations (if you have any, that you love).
+
+</details>
+
+> [!NOTE]
+> It is recommended to do the system level changes carefully, if doing manually.
+
+<details>
+<summary><b>System level changes</b></summary>
+
+Here are the step-by-step instructions:
+1. Clone the repository.
+2. Run the install.sh. OR if desired to do manually, you can create the .desktop entry in /use/share/wayland-sessions/hyprland-mac.desktop
+
+</details>
