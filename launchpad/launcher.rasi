@@ -1,0 +1,156 @@
+/**
+ * TahoeOS Minimal Layout Launchpad
+ */
+
+configuration {
+    modi:                       "drun";
+    show-icons:                 true;
+    drun-format:                "{name}";
+    font:                       "SF Pro Display Regular 11";
+    hover-select:               false;
+    scroll-method:              1;
+    me-select-entry:            "";
+    me-accept-entry:            "MousePrimary";
+    click-to-exit:              true;
+}
+
+* {
+    bg-color:                   #eef2f7d0; 
+    select-color:               #ffffff60; 
+    text-color:                 #1c1c1e;
+    text-selected:              #00000075;
+}
+
+window {
+    fullscreen:                 false;
+    width:                      42%;
+    height:                     75%; 
+    location:                   center;
+    anchor:                     center;
+    background-color:           @bg-color;
+    text-color:                 @text-color;
+    border:                     1px;
+    border-color:               #ffffff26;
+    border-radius:              40px;
+}
+
+mainbox {
+    background-color:           transparent;
+    padding:                    10px 20px;
+    children:                   [ "inputbar", "listview" ]; 
+}
+
+/* --- Clean Input Bar Container --- */
+inputbar {
+    background-color:           transparent;
+    expand:                     false;
+    margin:                     0px 0px 12px 0px;
+    padding:                    0px 0px 10px 0px;
+    orientation:                horizontal;
+    children:                   [ "textbox", "entry", "textbox-menu" ];
+    border:                     0px 0px 1px 0px;
+    border-color:               #1c1c1e15; 
+}
+
+textbox {
+    background-color:           transparent;
+    expand:                     false;
+    text-color:                 #3a3a3c;
+    placeholder:                " ⎊"; /* I show it and thought- 'wow? a cool lookin' arc reactor!' */
+    font:                       "SF Pro Display Medium 24";
+    horizontal-align:           0.5;
+    vertical-align:             0.5;
+    border:                     0px 1px 0px 0px;
+    border-color:               #1c1c1e20; 
+    padding:                    0px 10px 0px 0px; 
+}
+
+entry {
+    background-color:           transparent;
+    text-color:                 #3a3a3c;
+    placeholder:                "Applications";
+    font:                       "SF Pro Display Medium 13";
+    vertical-align:             0.5;
+    padding:                    0px 0px 0px 10px;
+    cursor-width:               2px;
+    cursor-color:               #3a3a3c;
+}
+
+textbox-menu-container {
+    background-color:           #1c1c1e12;    
+    expand:                     false;
+    border-radius:              100%;         
+    padding:                    6px 8px;          
+    margin:                     2px;
+    vertical-align:             0.5;
+    horizontal-align:           0.5;
+}
+
+textbox-menu {
+    background-color:           #1c1c1e15;
+    expand:                     false;
+    text-color:                 #1c1c1e95;    
+    placeholder:                "   ⋯   ";          
+    font:                       "SF Pro Display Meduim 12"; 
+    horizontal-align:           1;
+    vertical-align:             0.5;
+    cursor:                     pointer;
+    border-color:				#1c1c1e95;
+    border-radius:				28px;
+}
+
+/* I will have to do much more work on it */
+listview {
+    background-color:           transparent;
+    layout:                     vertical;
+    columns:                    5;  
+    lines:                      4;
+    fixed-columns:              true; 
+    fixed-height:               true;
+    dynamic:                    false;
+    cycle:                      true;       
+    spacing:                    1%;
+    scrollbar:                  true;
+}
+
+scrollbar {
+    width:                      6px;          
+    border:                     0px;
+    background-color:           #ffffff40;    
+    handle-color:               #1c1c1e50;    
+    handle-width:               6px;
+    border-radius:              12px;         
+    margin:                     0px 0px 0px 12px; 
+}
+
+element {
+    background-color:           transparent;
+    text-color:                 @text-color;
+    orientation:                vertical;
+    padding:                    14px 8px;
+    border-radius:              16px;
+}
+
+element selected {
+    background-color:           @select-color;
+    text-color:                 @text-selected;
+    border:                     1px;
+    border-color:               #007affb3; 
+    border-radius:              14px;      
+}
+
+element-icon {
+    background-color:           transparent;
+    size:                       3em; 
+    cursor:                     pointer;
+    horizontal-align:           0.5;
+}
+
+element-text {
+    background-color:           transparent;
+    text-color:                 inherit;
+    font:                       "SF Pro Display Regular 9.5";
+    horizontal-align:           0.5;
+    vertical-align:             0.5;
+    margin:                     8px 0px 0px 0px;
+}
