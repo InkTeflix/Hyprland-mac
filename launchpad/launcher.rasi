@@ -31,7 +31,7 @@ window {
     text-color:                 @text-color;
     border:                     1px;
     border-color:               #ffffff26;
-    border-radius:              40px;
+    border-radius:              2%; /* I had to use my drawing pencil, like an artist, to get the better radius... but it is still not right ;> */
 }
 
 mainbox {
@@ -72,7 +72,7 @@ entry {
     font:                       "SF Pro Display Medium 13";
     vertical-align:             0.5;
     padding:                    0px 0px 0px 10px;
-    cursor-width:               2px;
+    cursor-width:               0.147%;
     cursor-color:               #3a3a3c;
 }
 
@@ -141,7 +141,7 @@ element selected {
 
 element-icon {
     background-color:           transparent;
-    size:                       3em; 
+    size:                       7%; 
     cursor:                     pointer;
     horizontal-align:           0.5;
 }

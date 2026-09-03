@@ -1,0 +1,114 @@
+{
+    "layer": "top",
+    "position": "top",
+    "margin-top": 0,
+    "margin-left": 0,
+    "margin-right": 0,
+    "margin-bottom": 0,
+    "height": 34,
+    "spacing": 4,
+
+    "modules-left": [
+    	"custom/apple",
+    	"custom/finder",
+    	"custom/global-menu",
+        "hyprland/workspaces"
+    ],
+    "modules-center": [
+    	"hyprland/window"
+    ],
+    "modules-right": [
+        "pulseaudio",
+        "network",
+        "cpu",
+        "memory",
+        "clock"
+    ],
+
+    "custom/apple": {
+            "format": "", 
+            "tooltip": false,
+            "on-click": "rofi -show drun -theme ~/.config/hypr-mac/launchpad/launcher.rasi" 
+        },
+
+    "custom/finder": {
+		    "format": "Finder",
+    		"return-type": "json",
+    		"exec": "~/.config/hypr-mac/waybar/scripts/finder_status.sh",
+    		"on-click": "dolphin",
+    		"escape": true
+		},
+
+	"custom/global-menu": {
+		    "format": "{}",
+		    "return-type": "json",
+		    "exec": "~/.config/hypr-mac/waybar/scripts/menu_status.sh",
+		    "on-click": "zsh ~/.config/hypr-mac/waybar/scripts/global_menu_actions.sh",
+		    "escape": true
+		},
+
+    "hyprland/workspaces": {
+        "disable-scroll": true,
+        "all-outputs": true,
+        "format": "{icon}",
+        "format-icons": {
+            "default": "",
+            "active": "",
+            "urgent": ""
+        }
+    },
+
+    "hyprland/window": {
+        "format": " {initialTitle} ",
+        "separate-outputs": true,
+        "max-length": 25
+    },
+
+    "clock": {
+        "format": "{:%a %d %b %H:%M}",
+        //"format-alt": "{:%A, %b %d}",
+        "tooltip-format": "<big>{:%Y %B}</big>\n<tt><small>{calendar}</small></tt>"
+    },
+    
+
+    "cpu": {
+        "format": "  {usage}%",
+        "tooltip": true,
+        "on-click": "btop"
+    },
+
+    "memory": {
+        "format": "  {percentage}%"
+    },
+
+    "network": {
+        "format-wifi": "",
+        "format-ethernet": "󰈀",
+        "format-linked": "󰈀 (No IP)",
+        "format-disconnected": "⚠",
+        "tooltip-format": "{essid} ({signalStrength}%)"
+    },
+
+    "pulseaudio": {
+        "format": "{icon}  {volume}%",
+        "format-muted": "󰝟",
+        "format-icons": {
+            "default": ["", "", ""]
+        },
+        "on-click": "pavucontrol"
+    }
+}
+
+"custom/appmenu": {
+    "exec": "hyprctl activewindow -j | jq -r 'if .class == \"org.kde.dolphin\" then \"<b>Dolphin</b>   File   Edit   View   Go   Tools\" else \"<b>Finder</b>   File   Edit   View   Help\" end'",
+    "interval": 1,
+    "format": "{}",
+    "tooltip": false
+}
+
+"custom/appmenu": {
+    "exec": "~/.config/hypr-mac/waybar/scripts/get_app_menu.sh",
+    "interval": 1,
+    "on-click": "hyprctl dispatch sendshortcut CTRL, E, class:^org.kde.dolphin$" 
+    // ^ Sends Ctrl+E (or any shortcut) straight to Dolphin to reveal hidden options or menus smoothly
+}

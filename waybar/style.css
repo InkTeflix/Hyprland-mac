@@ -1,0 +1,140 @@
+/* Reset & Global Container */
+window#waybar {
+    /* Slightly lowered alpha (0.35) lets Hyprland's blur engine do the heavy lifting,
+       while dropping the RGB values to 240 gives it a cooler, premium frosted look */
+    background-color: transparent;
+    /*border: 1px solid rgba(255, 255, 255, 0.4);*/ /* Brighter border makes the edge pop like real glass */
+    /*border-radius: 16px;*/
+    color: #ffffff;
+    font-family: "SF Pro Display", "Inter", "Noto Sans", sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    
+    /* Stronger glass glare effects */
+    box-shadow: 
+        inset 0 1px 2px rgba(255, 255, 255, 0.5),
+        0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+/* Individual Module Base Styling (Inherits glass backdrop seamlessly) */
+.modules-left,
+.modules-center,
+.modules-right {
+    background: transparent;
+    padding: 2px 8px;
+}
+
+/* Left Group Margin Fix */
+.modules-left {
+    margin-left: 6px;
+}
+
+/* Right Group Margin Fix */
+.modules-right {
+    margin-right: 6px;
+}
+
+/* Workspaces (WhiteSur Style Dots) */
+#workspaces button {
+    padding: 0 6px;
+    color: rgba(255, 255, 255, 0.4);
+    background-color: transparent;
+    border: none;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+}
+
+#workspaces button.active {
+    color: #ffffff;
+    /*transform: scale(1.15);*/
+}
+
+#workspaces button.urgent {
+    color: #ff5f56;
+}
+
+#workspaces button:hover {
+    color: rgba(255, 255, 255, 0.8);
+    background: transparent;
+}
+
+/* Active Window Title */
+#window {
+    font-weight: 600;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+/* Universal Module Items Styling */
+#clock,
+#cpu,
+#memory,
+#network,
+#pulseaudio {
+    padding: 0 10px;
+    margin: 4px 2px;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+
+/* Gentle hovering highlights mimicking wet glass interaction */
+#clock:hover,
+#cpu:hover,
+#memory:hover,
+#network:hover,
+#pulseaudio:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Dedicated Visual Fix for Symbol/Icon Spacing */
+#network, #pulseaudio {
+    font-size: 15px; /* Boost font size slightly for cleaner glyph readability */
+}
+
+/* macOS Apple Logo Styling */
+#custom-apple {
+    font-size: 16px;
+    color: #ffffff;
+    padding: 0 10px 0 14px; /* Balanced cushion against the bar's rounded edge */
+    margin: 4px 0;
+    transition: all 0.2s ease;
+}
+
+#custom-apple:hover {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+/* Finder Text: Bold, Prominent, Premium */
+#custom-finder {
+    font-family: "SF Pro Display", sans-serif;
+    font-size: 15px;      /* Boosted size for emphasis */
+    font-weight: 800;     /* Extra heavy bold */
+    color: #ffffff;
+    padding: 0 12px 0 4px;
+    margin: 4px 0;
+}
+
+#custom-finder:hover {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+#custom-finder.hidden {
+    padding: 0;
+    margin: 0;
+}
+
+/* Global App Menu Strings: Sleek and Lighter Weight */
+#custom-global-menu {
+    font-family: "SF Pro Display", sans-serif;
+    font-size: 13.5px;
+    font-weight: 500;     /* Crisp regular medium weight layout look */
+    color: rgba(255, 255, 255, 0.85);     /* Subtle opacity fade */
+    padding: 0 16px;
+    margin: 4px 0;
+    transition: all 0.2s ease-in-out;
+}
+
+#custom-global-menu.hidden {
+    padding: 0;
+    margin: 0;
+}

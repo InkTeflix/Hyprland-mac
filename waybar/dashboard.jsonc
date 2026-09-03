@@ -1,0 +1,14 @@
+{
+    "layer": "bottom", // Locked underneath normal windows
+    "position": "right",
+    "width": 300,
+    "margin-top": 60,
+    "margin-right": 20,
+    "modules-left": ["clock", "custom/storage", "cpu", "memory"],
+    
+    "clock": {
+        "format": "<span font='32'><b>{:%H:%M}</b></span>\n<span>{:%A, %B %d}</span>"
+    },
+    "cpu": { "format": "📊 CPU: {usage}%" },
+    "memory": { "format": "💾 RAM: {percentage}%" }
+}
