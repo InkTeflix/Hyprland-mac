@@ -23,8 +23,8 @@ configuration {
 
 window {
     fullscreen:                 false;
-    width:                      42%;
-    height:                     75%; 
+    width:                      42%; 
+ /*   height:                     75%; */
     location:                   center;
     anchor:                     center;
     background-color:           @bg-color;
@@ -97,6 +97,7 @@ textbox-menu {
     cursor:                     pointer;
     border-color:				#1c1c1e95;
     border-radius:				28px;
+    click-to-exit:				true;
 }
 
 /* I will have to do much more work on it */
@@ -141,7 +142,7 @@ element selected {
 
 element-icon {
     background-color:           transparent;
-    size:                       7%; 
+    size:                       63px; 
     cursor:                     pointer;
     horizontal-align:           0.5;
 }

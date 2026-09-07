@@ -1,0 +1,47 @@
+/* Full-screen dark backdrop overlay */
+window {
+    background-color: rgba(0, 0, 0, 0.3);
+}
+
+/* Single container box - Clean and portable */
+grid {
+    background-color: rgba(30, 30, 30, 0.65);
+    border: 2px solid rgba(46, 143, 134, 0.6); /* Your macOS Tahoe teal border */
+    border-radius: 20px;
+    padding: 24px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* Individual button layout with absolute horizontal and vertical line centering */
+button {
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    color: #ffffff;
+    font-family: "-apple-system", "SF Pro Display", "Helvetica Neue", sans-serif;
+    font-size: 15px;
+    font-weight: 500;
+    margin: 10px;
+    
+    /* Strict dimensions to hold the layout steady */
+    min-width: 140px;
+    
+    /* 
+       THE SOLUTION: Squeezing the vertical spaces while zeroing out the side paddings 
+       forces the text label sub-widgets to sit dead-center without any styling errors.
+    */
+    padding-top: 45px;
+    padding-bottom: 45px;
+    padding-left: 0px;
+    padding-right: 0px;
+    
+    transition: background-color 0.15s ease-in-out;
+}
+
+/* Smooth macOS hover interaction */
+button:focus,
+button:active,
+button:hover {
+    background-color: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+}

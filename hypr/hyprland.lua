@@ -42,7 +42,7 @@ local menu        = "hyprlauncher"
 -- Autostart necessary processes (like notifications daemons, status bars, etc.)
 -- Or execute your favorite apps at launch like this:
 --
--- hl.on("hyprland.start", function ()
+-- hl.on("hyprland.start", function () 
 --   hl.exec_cmd(terminal)
 --   hl.exec_cmd("nm-applet")
 --   hl.exec_cmd("waybar & hyprpaper & firefox")
@@ -86,7 +86,7 @@ hl.env("HYPRCURSOR_SIZE", "24")
 hl.config({
     general = {
         gaps_in  = 5,
-        gaps_out = 20,
+        gaps_out = 10,
 
         border_size = 2,
 
@@ -96,7 +96,7 @@ hl.config({
         },
 
         -- Set to true to enable resizing windows by clicking and dragging on borders and gaps
-        resize_on_border = true,
+        resize_on_border = false,
 
         -- Please see https://wiki.hypr.land/Configuring/Advanced-and-Cool/Tearing/ before you turn this on
         allow_tearing = false,
@@ -109,7 +109,7 @@ hl.config({
         rounding_power = 2,
 
         -- Change transparency of focused and unfocused windows
-        active_opacity   = 0.9,
+        active_opacity   = 0.97,
         inactive_opacity = 0.7,
 
         shadow = {
@@ -224,15 +224,17 @@ hl.config({
         kb_rules   = "",
 
         follow_mouse = 1,
-        scroll_method = 'edge',
-        numlock_by_default =true,
+        scroll_method = 'edge', -- By deafult, it is not edge so you can comment it out with two hyphen/minus sign [--], and you will have the two finger scroll.
+        numlock_by_default =true, -- By default, it is turned off, but it is more convenient turned on, unless you're on a keyboard without separate num pad.
 
         sensitivity = 0, -- -1.0 - 1.0, 0 means no modification.
 
         touchpad = {
-            natural_scroll = true,
+            natural_scroll = true, -- turned on by default
+            -- tap-to-click is turned off by default in most tahoe, probably.
             tap_to_click = true, -- When set to true; Soft tap(with 1 finger) = Left click & Soft tap(with 2 fingers) = Right click, on the touchpad
-        clickfinger_behavior = false -- When set true, click down anywhere on the trackpad: 1Finger = Left_Click, 2Fingers = Right_Click & 3Fingers = Middle_Click.
+            -- whereas, click-finger is rather popular, maybe, but many in hyprland community aren't used to that.
+        	clickfinger_behavior = false -- When set true, click down anywhere on the trackpad: 1Finger = Left Click, 2Fingers = Right Click & 3Fingers = Middle Click.
         },
     },
 })
@@ -362,13 +364,19 @@ hl.window_rule({
 -- TahoeOS specifications
 
 -- Custom keybinds
-
-hl.bind(mainMod .. " + Super_L", hl.dsp.exec_cmd("rofi -show drun -theme ~/.config/hypr-mac/launchpad/launcher.rasi"))
-hl.bind(mainMod .. " + W", hl.dsp.exec_cmd("waypaper"))
+hl.bind(mainMod .. " + f", hl.dsp.window.fullscreen("maximized", "toggle")) 
+hl.bind(mainMod .. " + super_l", hl.dsp.exec_cmd("pkill rofi || rofi -show drun -theme ~/.config/hypr-mac/launchpad/launcher.rasi"))
+hl.bind(mainMod .. " + escape", hl.dsp.exec_cmd("pkill wlogout || ~/.config/hypr-mac/wlogout/launch.sh &"))
+hl.bind(mainMod .. " + w", hl.dsp.exec_cmd("waypaper"))
+hl.bind(mainMod .. " + print", hl.dsp.exec_cmd('grim -g "$(slurp)" - | wl-copy && notify-send -a "Screenshot" -i "image-x-generic" "Captured" "Saved to clipboard."'))
+hl.bind("print", hl.dsp.exec_cmd('grim -g "$(slurp)" /tmp/ss.png && swappy -f /tmp/ss.png -o /tmp/ss.png && wl-copy < /tmp/ss.png && notify-send -a "Screenshot" -i /tmp/ss.png "Captured" "Saved to clipboard."'))
+hl.bind("SHIFT + print", hl.dsp.exec_cmd('grim /tmp/ss.png && wl-copy < /tmp/ss.png && notify-send -a "Screenshot" -i /tmp/ss.png "Captured" "Saved to clipboard."'))
 
 hl.on("hyprland.start",function()
-	hl.exec_cmd("while true; do waybar -c ~/.config/hypr-mac/waybar/config.jsonc -s ~/.config/hypr-mac/waybar/style.css; sleep 0.5; done")
+    hl.exec_cmd("while true; do waybar -c ~/.config/hypr-mac/waybar/config.jsonc -s ~/.config/hypr-mac/waybar/style.css; sleep 0.5; done")
     hl.exec_cmd("awww-daemon && awww img ~/.config/hypr-mac/wpp/default-light.jpg")
+    hl.exec_cmd("pkill mako; mako -c ~/.config/hypr-mac/mako/config &")
+    --hl.exec_cmd("~/.config/hypr-mac/hypr/launch.sh")
 end)
 
 -- Waypaper Dashboard Pop-up Look
@@ -379,5 +387,5 @@ hl.window_rule({
     float       = true,
     size        = "950 650",         -- Perfect size for a centered 3-column preview grid
     center      = true,              -- Keeps it locked directly in the middle of your screen
-    pin         = true,              -- Keeps it visible if you switch workspaces mid-selection
+    pin         = false,              -- Keeps it visible if you switch workspaces mid-selection
 })

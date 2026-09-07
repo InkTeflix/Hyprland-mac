@@ -1,0 +1,47 @@
+{
+    "label" : "lock",
+    "action" : "hyprlock -c ~/.config/hypr-mac/hypr/hyprlock.conf",
+    "text" : "Lock
+ [ L ]",
+    "keybind" : "l"
+},
+
+{
+    "label" : "quit",
+    "action" : "pkill wlogout",
+    "text" : "Quit
+ [ Q ]",
+    "keybind" : "q"
+}
+
+{
+    "label" : "suspend",
+    "action" : "systemctl suspend",
+    "text" : "Suspend
+     [ S ]",
+    "keybind" : "s"
+},
+
+{
+    "label" : "reboot",
+    "action" : "hyprshutdown --post-cmd 'systemctl reboot'",
+    "text" : "Reboot
+    [ R ]",
+    "keybind" : "r"
+},
+
+{
+    "label" : "logout",
+    "action" : "hyprshutdown",
+    "text" : "Log Out
+     [ E ]",
+    "keybind" : "e"
+},
+
+{
+    "label" : "shutdown",
+    "action" : "hyprshutdown --post-cmd 'systemctl poweroff'",
+    "text" : "Power Off
+       [ P ]",
+    "keybind" : "p"
+},
