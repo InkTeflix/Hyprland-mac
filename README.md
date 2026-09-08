@@ -5,7 +5,7 @@ Any *and* all complain will be *tried* to be resolved.
 
 ### requirements 
 1. *linux* -any linux distro that supports hyprland (wayland).
-2. *Hyprland -verion 5.55+* -for lua scrpit.
+2. *Hyprland -verion 0.55+* -for hyprland.lua support.
 3. *Awww (swww)* -for wallpaper.
 4. *nwg-dock-hyprland* -for dock.
 5. *Waybar* -for the top bar & tool bar (optional, mainly for global menu).
