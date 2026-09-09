@@ -1,6 +1,18 @@
+MenuBar=Disabled
+
+[DetailsMode]
+PreviewSize=32
+
 [General]
+AutoExpandFolders=true
+BrowseThroughArchives=true
+DynamicView=true
+HideXTrashFile=true
 Version=202
-ViewPropsTimestamp=2026,9,4,19,7,55.089
+ViewPropsTimestamp=2026,7,11,14,44,33.29
+
+[IconsMode]
+PreviewSize=48
 
 [KFileDialog Settings]
 Places Icons Auto-resize=false
@@ -8,3 +20,17 @@ Places Icons Static Size=22
 
 [MainWindow]
 MenuBar=Disabled
+
+[MainWindow][Toolbar mainToolBar]
+IconSize=16
+ToolButtonStyle=IconOnly
+
+[PreviewSettings]
+Plugins=appimagethumbnail,audiothumbnail,glycin-heif,evince,papers,comicbookthumbnail,cursorthumbnail,djvuthumbnail,ebookthumbnail,exrthumbnail,directorythumbnail,fontthumbnail,imagethumbnail,glycin-image-rs,jpegthumbnail,glycin-jxl,kraorathumbnail,windowsexethumbnail,windowsimagethumbnail,gsf-office,gst-video-thumbnailer,opendocumentthumbnail,gst-audio-thumbnailer,glycin-svg,svgthumbnail,gnome-font-viewer,ffmpegthumbs
+
+[Toolbar mainToolBar]
+IconSize=16
+ToolButtonStyle=IconOnly
+
+[UiSettings]
+ColorScheme=WhiteSurDark

@@ -364,7 +364,7 @@ hl.window_rule({
 -- TahoeOS specifications
 
 -- Custom keybinds
-hl.bind(mainMod .. " + f", hl.dsp.window.fullscreen("maximized", "toggle")) 
+hl.bind(mainMod .. " + f", hl.dsp.window.fullscreen("maximized", "toggle"))
 hl.bind(mainMod .. " + super_l", hl.dsp.exec_cmd("pkill rofi || rofi -show drun -theme ~/.config/hypr-mac/launchpad/launcher.rasi"))
 hl.bind(mainMod .. " + escape", hl.dsp.exec_cmd("pkill wlogout || ~/.config/hypr-mac/wlogout/launch.sh &"))
 hl.bind(mainMod .. " + w", hl.dsp.exec_cmd("waypaper"))
@@ -376,7 +376,6 @@ hl.on("hyprland.start",function()
     hl.exec_cmd("while true; do waybar -c ~/.config/hypr-mac/waybar/config.jsonc -s ~/.config/hypr-mac/waybar/style.css; sleep 0.5; done")
     hl.exec_cmd("awww-daemon && awww img ~/.config/hypr-mac/wpp/default-light.jpg")
     hl.exec_cmd("pkill mako; mako -c ~/.config/hypr-mac/mako/config &")
-    --hl.exec_cmd("~/.config/hypr-mac/hypr/launch.sh")
 end)
 
 -- Waypaper Dashboard Pop-up Look
