@@ -1,0 +1,43 @@
+window {
+	background-color: rgba(255, 255, 255, 0.15); /* Light glass effect */
+	border: 1px solid rgba(255, 255, 255, 0.25);
+	border-radius: 20px; /* Distinct macOS rounded look */
+	padding: 6px;
+}
+
+#box {
+  /* Define attributes of the box surrounding icons here */
+  padding: 0px 6px;
+}
+
+#active {
+	/* This is to underline the button representing the currently active window */
+	border-bottom: solid 0px;
+	border-color: #FFFFFF
+}
+
+button, image {
+	background: none;
+	border-style: none;
+	box-shadow: none;
+	color: transparent
+}
+
+button {
+	background: transparent;
+	border: none;
+	border-radius: 12px;
+	padding: 6px;
+	margin: 0 0px;
+	transition: all 0.2s ease-in-out;
+}
+
+button:hover {
+	background-color: rgba(255, 255, 255, 0.15);
+	border-radius: 20px;
+	padding: 0px;
+}
+
+button:focus {
+	box-shadow: none
+}
