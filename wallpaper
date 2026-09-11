@@ -1,0 +1,870 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+
+# ============================================================
+# PATHS
+# ============================================================
+
+HYPR_MAC_DIR = (
+    Path.home()
+    / ".config"
+    / "hypr-mac"
+)
+
+WALLPAPER_DIR = (
+    HYPR_MAC_DIR
+    / "wpp"
+)
+
+STATE_DIR = (
+    HYPR_MAC_DIR
+    / "wallpaper-state"
+)
+
+SOCKET_FILE = (
+    STATE_DIR
+    / "controller.sock"
+)
+
+CONTROLLER = (
+    STATE_DIR
+    / "controller.py"
+)
+
+COMPLETION_ZSH = (
+    STATE_DIR
+    / "completion.zsh"
+)
+
+COMPLETION_BASH = (
+    STATE_DIR
+    / "completion.bash"
+)
+
+
+# ============================================================
+# CONTROLLER COMMUNICATION
+# ============================================================
+
+def send(command):
+
+    if not SOCKET_FILE.exists():
+
+        print(
+            "wallpaper: controller is not running",
+            file=sys.stderr,
+        )
+
+        print(
+            "Start it with:",
+            file=sys.stderr,
+        )
+
+        print(
+            "  ~/.config/hypr-mac/wallpaper start",
+            file=sys.stderr,
+        )
+
+        return 1
+
+
+    try:
+
+        with socket.socket(
+            socket.AF_UNIX,
+            socket.SOCK_STREAM,
+        ) as sock:
+
+            sock.settimeout(5)
+
+            sock.connect(
+                str(SOCKET_FILE)
+            )
+
+            sock.sendall(
+                command.encode("utf-8")
+            )
+
+            response = sock.recv(
+                65536
+            ).decode("utf-8")
+
+
+    except (
+        ConnectionRefusedError,
+        FileNotFoundError,
+        OSError,
+    ):
+
+        print(
+            "wallpaper: controller is not running",
+            file=sys.stderr,
+        )
+
+        return 1
+
+
+    print(
+        response,
+        end=""
+    )
+
+
+    if response.startswith(
+        "error:"
+    ):
+
+        return 1
+
+
+    return 0
+
+
+# ============================================================
+# START CONTROLLER
+# ============================================================
+
+def start_controller():
+
+    STATE_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+
+    # --------------------------------------------------------
+    # Check whether the existing socket is alive.
+    # --------------------------------------------------------
+
+    if SOCKET_FILE.exists():
+
+        try:
+
+            with socket.socket(
+                socket.AF_UNIX,
+                socket.SOCK_STREAM,
+            ) as sock:
+
+                sock.settimeout(0.2)
+
+                sock.connect(
+                    str(SOCKET_FILE)
+                )
+
+                sock.sendall(
+                    b"status"
+                )
+
+                sock.recv(4096)
+
+
+            print(
+                "wallpaper: controller already running"
+            )
+
+            return 0
+
+
+        except (
+            ConnectionRefusedError,
+            FileNotFoundError,
+            OSError,
+        ):
+
+            # Stale socket.
+            try:
+                SOCKET_FILE.unlink()
+            except OSError:
+                pass
+
+
+    if not CONTROLLER.exists():
+
+        print(
+            "wallpaper: controller not found:",
+            file=sys.stderr,
+        )
+
+        print(
+            f"  {CONTROLLER}",
+            file=sys.stderr,
+        )
+
+        return 1
+
+
+    try:
+
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(CONTROLLER),
+            ],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+
+    except OSError as e:
+
+        print(
+            f"wallpaper: failed to start controller: {e}",
+            file=sys.stderr,
+        )
+
+        return 1
+
+
+    print(
+        "wallpaper: controller started"
+    )
+
+    return 0
+
+
+# ============================================================
+# SHELL SETUP
+# ============================================================
+
+def shell_config(shell):
+
+    if shell == "zsh":
+
+        return (
+            Path.home()
+            / ".zshrc"
+        )
+
+    if shell == "bash":
+
+        return (
+            Path.home()
+            / ".bashrc"
+        )
+
+    return None
+
+
+def completion_file(shell):
+
+    if shell == "zsh":
+        return COMPLETION_ZSH
+
+    if shell == "bash":
+        return COMPLETION_BASH
+
+    return None
+
+
+def setup_shell(shell):
+
+    config = shell_config(
+        shell
+    )
+
+    completion = completion_file(
+        shell
+    )
+
+
+    if config is None:
+
+        print(
+            f"Unsupported shell: {shell}",
+            file=sys.stderr,
+        )
+
+        return 1
+
+
+    print()
+    print(
+        "hypr-mac wallpaper shell integration"
+    )
+    print(
+        "-------------------------------------"
+    )
+
+    print(
+        f"Shell:  {shell}"
+    )
+
+    print(
+        f"Config: {config}"
+    )
+
+    print()
+
+
+    # --------------------------------------------------------
+    # Completion file
+    # --------------------------------------------------------
+
+    if completion.exists():
+
+        print(
+            "✓ completion file exists"
+        )
+
+    else:
+
+        print(
+            "✗ completion file is missing:"
+        )
+
+        print(
+            f"  {completion}"
+        )
+
+        return 1
+
+
+    # --------------------------------------------------------
+    # Shell configuration
+    # --------------------------------------------------------
+
+    source_line = (
+        f'source "$HOME/.config/hypr-mac/'
+        f'wallpaper-state/completion.{shell}"'
+    )
+
+
+    try:
+
+        config_text = (
+            config.read_text(
+                encoding="utf-8"
+            )
+            if config.exists()
+            else ""
+        )
+
+    except OSError as e:
+
+        print(
+            f"✗ Could not read {config}: {e}"
+        )
+
+        return 1
+
+
+    if source_line in config_text:
+
+        print(
+            f"✓ {config.name} sources completion.{shell}"
+        )
+
+        print()
+        print(
+            "Setup is complete."
+        )
+
+        print(
+            "wpp and wallpaper Tab completion "
+            "are configured."
+        )
+
+        print()
+        print(
+            "Try:"
+        )
+
+        print(
+            "  wpp --help"
+        )
+
+        print(
+            "  wpp <TAB>"
+        )
+
+        print(
+            "  wpp set <TAB>"
+        )
+
+        print()
+
+        return 0
+
+
+    # --------------------------------------------------------
+    # Not installed
+    # --------------------------------------------------------
+
+    print(
+        f"✗ {config.name} does not source "
+        f"completion.{shell}"
+    )
+
+    print()
+    print(
+        "Add this ONE line to:"
+    )
+
+    print(
+        f"  {config}"
+    )
+
+    print()
+
+    print(
+        source_line
+    )
+
+    print()
+    print(
+        f"Then reload your shell:"
+    )
+
+    print(
+        f"  source {config}"
+    )
+
+    print()
+
+    return 1
+
+
+def setup():
+
+    shell = (
+        os.environ.get(
+            "SHELL",
+            "",
+        )
+        .rsplit(
+            "/",
+            1,
+        )[-1]
+    )
+
+
+    if shell in (
+        "zsh",
+        "bash",
+    ):
+
+        return setup_shell(
+            shell
+        )
+
+
+    print(
+        "Could not determine whether "
+        "you use bash or zsh.",
+        file=sys.stderr,
+    )
+
+    print()
+    print(
+        "Use one of:"
+    )
+
+    print(
+        "  wallpaper setup-zsh"
+    )
+
+    print(
+        "  wallpaper setup-bash"
+    )
+
+    return 1
+
+
+# ============================================================
+# HELP
+# ============================================================
+
+DESCRIPTION = """
+Lightweight awww wallpaper controller for Hyprland.
+
+Wallpaper directory:
+  ~/.config/hypr-mac/wpp/
+
+Controller/state:
+  ~/.config/hypr-mac/wallpaper-state/
+
+The background controller is event-driven and sleeps
+when nothing needs to happen.
+"""
+
+
+EPILOG = """
+Examples:
+
+  wallpaper start
+  wallpaper stop
+  wallpaper status
+  wallpaper current
+
+  wallpaper next
+  wallpaper previous
+  wallpaper set first-day.png
+
+  wallpaper mode manual
+  wallpaper mode periodic 5
+  wallpaper mode periodic 30
+  wallpaper mode family-time
+  wallpaper mode rotate-time 30
+
+  wallpaper reload
+
+Shell setup:
+
+  wallpaper setup
+  wallpaper setup-zsh
+  wallpaper setup-bash
+
+After shell completion is installed:
+
+  wpp <TAB>
+  wpp set <TAB>
+  wpp mode <TAB>
+"""
+
+
+def build_parser():
+
+    parser = argparse.ArgumentParser(
+        prog="wallpaper",
+        description=DESCRIPTION,
+        epilog=EPILOG,
+        formatter_class=(
+            argparse.RawDescriptionHelpFormatter
+        ),
+    )
+
+
+    subparsers = parser.add_subparsers(
+        dest="command",
+        metavar="COMMAND",
+    )
+
+
+    # --------------------------------------------------------
+    # Controller
+    # --------------------------------------------------------
+
+    subparsers.add_parser(
+        "start",
+        help="start the background controller",
+    )
+
+    subparsers.add_parser(
+        "stop",
+        help="stop the background controller",
+    )
+
+    subparsers.add_parser(
+        "status",
+        help="show controller state",
+    )
+
+    subparsers.add_parser(
+        "current",
+        help="show wallpaper currently reported by awww",
+    )
+
+    subparsers.add_parser(
+        "reload",
+        help="rescan wallpaper directory",
+    )
+
+    subparsers.add_parser(
+        "next",
+        help="select the next wallpaper",
+    )
+
+    subparsers.add_parser(
+        "previous",
+        help="select the previous wallpaper",
+    )
+
+
+    # --------------------------------------------------------
+    # Set
+    # --------------------------------------------------------
+
+    set_parser = subparsers.add_parser(
+        "set",
+        help="set a specific wallpaper",
+    )
+
+    set_parser.add_argument(
+        "wallpaper",
+        help="wallpaper filename or path",
+    )
+
+
+    # --------------------------------------------------------
+    # Setup
+    # --------------------------------------------------------
+
+    subparsers.add_parser(
+        "setup",
+        help="check/setup shell integration",
+    )
+
+    subparsers.add_parser(
+        "setup-zsh",
+        help="check zsh integration",
+    )
+
+    subparsers.add_parser(
+        "setup-bash",
+        help="check bash integration",
+    )
+
+
+    # --------------------------------------------------------
+    # Mode
+    # --------------------------------------------------------
+
+    mode_parser = subparsers.add_parser(
+        "mode",
+        help="change automatic wallpaper mode",
+    )
+
+
+    mode_subparsers = (
+        mode_parser.add_subparsers(
+            dest="mode",
+            metavar="MODE",
+        )
+    )
+
+
+    mode_subparsers.add_parser(
+        "manual",
+        help="disable automatic wallpaper changes",
+    )
+
+
+    periodic_parser = mode_subparsers.add_parser(
+        "periodic",
+        help="random wallpaper every N minutes",
+    )
+
+    periodic_parser.add_argument(
+        "minutes",
+        type=int,
+        help="minutes between wallpaper changes",
+    )
+
+
+    mode_subparsers.add_parser(
+        "family-time",
+        help=(
+            "stay in one family and choose "
+            "the time-appropriate variant"
+        ),
+    )
+
+
+    rotate_parser = mode_subparsers.add_parser(
+        "rotate-time",
+        help=(
+            "rotate families every N minutes "
+            "and choose the time-appropriate variant"
+        ),
+    )
+
+    rotate_parser.add_argument(
+        "minutes",
+        type=int,
+        help="minutes between family changes",
+    )
+
+
+    return parser
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    parser = build_parser()
+
+    args = parser.parse_args()
+
+
+    if args.command is None:
+
+        parser.print_help()
+
+        return 0
+
+
+    if args.command == "start":
+
+        return start_controller()
+
+
+    if args.command == "stop":
+
+        return send(
+            "stop"
+        )
+
+
+    if args.command == "status":
+
+        return send(
+            "status"
+        )
+
+
+    if args.command == "current":
+
+        return send(
+            "current"
+        )
+
+
+    if args.command == "reload":
+
+        return send(
+            "reload"
+        )
+
+
+    if args.command == "next":
+
+        return send(
+            "next"
+        )
+
+
+    if args.command == "previous":
+
+        return send(
+            "previous"
+        )
+
+
+    if args.command == "set":
+
+        path = (
+            Path(
+                args.wallpaper
+            )
+            .expanduser()
+        )
+
+
+        if not path.is_absolute():
+
+            path = (
+                WALLPAPER_DIR
+                / path
+            )
+
+
+        return send(
+            "set "
+            + str(path)
+        )
+
+
+    if args.command == "setup":
+
+        return setup()
+
+
+    if args.command == "setup-zsh":
+
+        return setup_shell(
+            "zsh"
+        )
+
+
+    if args.command == "setup-bash":
+
+        return setup_shell(
+            "bash"
+        )
+
+
+    if args.command == "mode":
+
+        if args.mode is None:
+
+            print(
+                "Usage:"
+            )
+
+            print(
+                "  wallpaper mode "
+                "{manual,periodic,family-time,rotate-time}"
+            )
+
+            return 1
+
+
+        if args.mode == "manual":
+
+            return send(
+                "mode manual"
+            )
+
+
+        if args.mode == "periodic":
+
+            if args.minutes < 1:
+
+                print(
+                    "wallpaper: minutes must be >= 1",
+                    file=sys.stderr,
+                )
+
+                return 1
+
+
+            return send(
+                f"mode periodic {args.minutes}"
+            )
+
+
+        if args.mode == "family-time":
+
+            return send(
+                "mode family-time"
+            )
+
+
+        if args.mode == "rotate-time":
+
+            if args.minutes < 1:
+
+                print(
+                    "wallpaper: minutes must be >= 1",
+                    file=sys.stderr,
+                )
+
+                return 1
+
+
+            return send(
+                f"mode rotate-time {args.minutes}"
+            )
+
+
+    parser.print_help()
+
+    return 1
+
+
+if __name__ == "__main__":
+
+    sys.exit(
+        main()
+    )

@@ -1,0 +1,1377 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import random
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+from datetime import datetime, timedelta
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+HYPR_MAC_DIR = Path.home() / ".config" / "hypr-mac"
+
+# Wallpaper directory
+WALLPAPER_DIR = HYPR_MAC_DIR / "wpp"
+
+# Controller state
+STATE_DIR = HYPR_MAC_DIR / "wallpaper-state"
+STATE_FILE = STATE_DIR / "state.json"
+PID_FILE = STATE_DIR / "controller.pid"
+
+# Optional default wallpaper.
+#
+# Example:
+# DEFAULT_WALLPAPER = WALLPAPER_DIR / "first-day.png"
+#
+# Leave as None if you want awww's existing cached wallpaper
+# to be restored automatically.
+DEFAULT_WALLPAPER = None
+
+
+# ============================================================
+# TIME CONFIGURATION
+# ============================================================
+
+# Time-of-day boundaries:
+#
+# 05:00 -> dawn
+# 09:00 -> day
+# 17:00 -> dusk
+# 21:00 -> night
+
+TIME_SLOTS = [
+    (5, "dawn"),
+    (9, "day"),
+    (17, "dusk"),
+    (21, "night"),
+]
+
+
+# ============================================================
+# WALLPAPER CONFIGURATION
+# ============================================================
+
+IMAGE_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".gif",
+    ".bmp",
+}
+
+AWWW = "awww"
+
+# Cheapest option.
+# Change to "fade" if you want transitions.
+TRANSITION_TYPE = "none"
+
+# Don't choose the same family twice in a row.
+AVOID_SAME_FAMILY = True
+
+
+# ============================================================
+# DEFAULT STATE
+# ============================================================
+
+DEFAULT_STATE = {
+    "mode": "manual",
+    "interval": 30,
+    "current": None,
+    "previous": None,
+    "family": None,
+    "index": 0,
+}
+
+
+# ============================================================
+# STATE MANAGEMENT
+# ============================================================
+
+def ensure_state_dir():
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def load_state():
+    ensure_state_dir()
+
+    if not STATE_FILE.exists():
+        return DEFAULT_STATE.copy()
+
+    try:
+        with STATE_FILE.open("r", encoding="utf-8") as f:
+            state = json.load(f)
+
+        result = DEFAULT_STATE.copy()
+        result.update(state)
+
+        return result
+
+    except (OSError, json.JSONDecodeError):
+        return DEFAULT_STATE.copy()
+
+
+def save_state(state):
+    ensure_state_dir()
+
+    tmp = STATE_FILE.with_suffix(".tmp")
+
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+
+    tmp.replace(STATE_FILE)
+
+
+# ============================================================
+# WALLPAPER DISCOVERY
+# ============================================================
+
+def discover_wallpapers():
+    """
+    Scan only ~/.config/hypr-mac/wpp recursively.
+
+    Only recognized image extensions are included.
+    """
+
+    if not WALLPAPER_DIR.exists():
+        return []
+
+    wallpapers = []
+
+    for path in WALLPAPER_DIR.rglob("*"):
+
+        if not path.is_file():
+            continue
+
+        if path.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+
+        wallpapers.append(path.resolve())
+
+    return sorted(
+        wallpapers,
+        key=lambda p: str(p).lower()
+    )
+
+
+def split_family(path):
+    """
+    Split:
+
+        third-blue.jpeg
+
+    into:
+
+        family  = third
+        variant = blue
+
+    The final '-' separates family from variant.
+    """
+
+    stem = Path(path).stem
+
+    if "-" not in stem:
+        return stem, ""
+
+    family, variant = stem.rsplit("-", 1)
+
+    return family, variant.lower()
+
+
+def build_families(wallpapers):
+    families = {}
+
+    for path in wallpapers:
+
+        family, variant = split_family(path)
+
+        if family not in families:
+            families[family] = []
+
+        families[family].append({
+            "path": path,
+            "variant": variant,
+        })
+
+    return families
+
+
+# ============================================================
+# TIME OF DAY
+# ============================================================
+
+def current_slot():
+
+    now = datetime.now()
+
+    current_minutes = (
+        now.hour * 60 +
+        now.minute
+    )
+
+    boundaries = [
+        (5 * 60, "dawn"),
+        (9 * 60, "day"),
+        (17 * 60, "dusk"),
+        (21 * 60, "night"),
+    ]
+
+    result = "night"
+
+    for minute, slot in boundaries:
+
+        if current_minutes >= minute:
+            result = slot
+
+    return result
+
+
+def next_time_boundary():
+
+    now = datetime.now()
+
+    candidates = []
+
+    for hour, _ in TIME_SLOTS:
+
+        candidate = now.replace(
+            hour=hour,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+
+        if candidate <= now:
+            candidate += timedelta(days=1)
+
+        candidates.append(candidate)
+
+    next_change = min(candidates)
+
+    return max(
+        1,
+        int(
+            (next_change - now).total_seconds()
+        )
+    )
+
+
+# ============================================================
+# TIME-APPROPRIATE VARIANT
+# ============================================================
+
+def find_variant(family_items, slot):
+
+    # Exact match first.
+    for item in family_items:
+
+        if item["variant"] == slot:
+            return item["path"]
+
+
+    # Useful aliases.
+    aliases = {
+
+        "dawn": [
+            "morning",
+            "golden",
+            "light",
+        ],
+
+        "day": [
+            "light",
+            "blue",
+            "cyan",
+        ],
+
+        "dusk": [
+            "evening",
+            "golden",
+            "purple",
+        ],
+
+        "night": [
+            "dark",
+            "purple",
+            "cyan",
+        ],
+    }
+
+
+    for alias in aliases.get(slot, []):
+
+        for item in family_items:
+
+            if item["variant"] == alias:
+                return item["path"]
+
+
+    # Final fallback:
+    # deterministic rather than random.
+    if family_items:
+        return family_items[0]["path"]
+
+    return None
+
+
+# ============================================================
+# FAMILY SELECTION
+# ============================================================
+
+def choose_family(
+    families,
+    previous_family=None
+):
+
+    names = list(families.keys())
+
+    if not names:
+        return None
+
+    if (
+        AVOID_SAME_FAMILY
+        and previous_family in names
+        and len(names) > 1
+    ):
+
+        names = [
+            name
+            for name in names
+            if name != previous_family
+        ]
+
+    return random.choice(names)
+
+
+def choose_family_time(
+    families,
+    family_name=None
+):
+
+    if not families:
+        return None, None
+
+    slot = current_slot()
+
+    if family_name is None:
+
+        family_name = random.choice(
+            list(families.keys())
+        )
+
+    items = families.get(
+        family_name,
+        []
+    )
+
+    if not items:
+        return None, None
+
+    wallpaper = find_variant(
+        items,
+        slot
+    )
+
+    return wallpaper, family_name
+
+
+# ============================================================
+# RANDOM WALLPAPER
+# ============================================================
+
+def choose_random_wallpaper(
+    wallpapers,
+    state
+):
+
+    if not wallpapers:
+        return None
+
+    candidates = wallpapers
+
+    if len(wallpapers) > 1:
+
+        current = state.get("current")
+
+        if current:
+
+            current = Path(
+                current
+            ).resolve()
+
+            candidates = [
+                path
+                for path in wallpapers
+                if path != current
+            ]
+
+    return random.choice(candidates)
+
+
+# ============================================================
+# AWWW
+# ============================================================
+
+def set_wallpaper(path):
+
+    path = Path(path).expanduser().resolve()
+
+    if not path.exists():
+
+        print(
+            f"wallpaper: file does not exist: {path}",
+            file=sys.stderr,
+        )
+
+        return False
+
+
+    command = [
+        AWWW,
+        "img",
+        str(path),
+    ]
+
+
+    if TRANSITION_TYPE:
+
+        command += [
+            "--transition-type",
+            TRANSITION_TYPE,
+        ]
+
+
+    try:
+
+        subprocess.run(
+            command,
+            check=True,
+        )
+
+
+    except FileNotFoundError:
+
+        print(
+            "wallpaper: 'awww' was not found in PATH",
+            file=sys.stderr,
+        )
+
+        return False
+
+
+    except subprocess.CalledProcessError as e:
+
+        print(
+            "wallpaper: awww failed "
+            f"with exit code {e.returncode}",
+            file=sys.stderr,
+        )
+
+        return False
+
+
+    return True
+
+
+# ============================================================
+# PID MANAGEMENT
+# ============================================================
+
+def is_running():
+
+    if not PID_FILE.exists():
+        return False
+
+    try:
+
+        pid = int(
+            PID_FILE.read_text().strip()
+        )
+
+    except (ValueError, OSError):
+
+        return False
+
+
+    try:
+
+        os.kill(pid, 0)
+
+    except ProcessLookupError:
+
+        return False
+
+    except PermissionError:
+
+        return True
+
+
+    return True
+
+
+def write_pid():
+
+    ensure_state_dir()
+
+    PID_FILE.write_text(
+        str(os.getpid())
+    )
+
+
+def remove_pid():
+
+    try:
+
+        PID_FILE.unlink()
+
+    except FileNotFoundError:
+
+        pass
+
+
+# ============================================================
+# CONTROLLER
+# ============================================================
+
+class Controller:
+
+    def __init__(self):
+
+        self.running = True
+
+        signal.signal(
+            signal.SIGTERM,
+            self.stop_signal,
+        )
+
+        signal.signal(
+            signal.SIGINT,
+            self.stop_signal,
+        )
+
+
+    def stop_signal(
+        self,
+        signum,
+        frame
+    ):
+
+        self.running = False
+
+
+    def apply(
+        self,
+        path,
+        state,
+        family=None
+    ):
+
+        if path is None:
+            return False
+
+        path = Path(path).resolve()
+
+        if not set_wallpaper(path):
+            return False
+
+        previous = state.get(
+            "current"
+        )
+
+        state["previous"] = previous
+        state["current"] = str(path)
+        state["family"] = family
+
+        save_state(state)
+
+        print(
+            f"wallpaper: {path}",
+            flush=True
+        )
+
+        return True
+
+
+    def run(self):
+
+        if is_running():
+
+            print(
+                "wallpaper: controller is "
+                "already running"
+            )
+
+            return
+
+        write_pid()
+
+        try:
+            self.loop()
+
+        finally:
+            remove_pid()
+
+
+    def loop(self):
+
+        state = load_state()
+
+        wallpapers = discover_wallpapers()
+
+        if not wallpapers:
+
+            print(
+                f"wallpaper: no images found in "
+                f"{WALLPAPER_DIR}",
+                file=sys.stderr,
+            )
+
+            while self.running:
+
+                time.sleep(300)
+
+            return
+
+
+        families = build_families(
+            wallpapers
+        )
+
+
+        # ----------------------------------------------------
+        # Startup
+        # ----------------------------------------------------
+
+        current = state.get(
+            "current"
+        )
+
+        if (
+            current
+            and Path(current).exists()
+        ):
+
+            # Let awww restore its cached wallpaper.
+            pass
+
+
+        elif DEFAULT_WALLPAPER:
+
+            default_path = Path(
+                DEFAULT_WALLPAPER
+            ).expanduser()
+
+            if default_path.exists():
+
+                self.apply(
+                    default_path,
+                    state,
+                )
+
+
+        # ----------------------------------------------------
+        # Main loop
+        # ----------------------------------------------------
+
+        while self.running:
+
+            mode = state.get(
+                "mode",
+                "manual"
+            )
+
+
+            # ================================================
+            # MANUAL
+            # ================================================
+
+            if mode == "manual":
+
+                time.sleep(3600)
+
+                state = load_state()
+
+                wallpapers = (
+                    discover_wallpapers()
+                )
+
+                families = (
+                    build_families(
+                        wallpapers
+                    )
+                )
+
+                continue
+
+
+            # ================================================
+            # PERIODIC
+            # ================================================
+
+            if mode == "periodic":
+
+                interval = max(
+                    1,
+                    int(
+                        state.get(
+                            "interval",
+                            30
+                        )
+                    )
+                )
+
+
+                wallpaper = (
+                    choose_random_wallpaper(
+                        wallpapers,
+                        state
+                    )
+                )
+
+
+                self.apply(
+                    wallpaper,
+                    state,
+                )
+
+
+                self.interruptible_sleep(
+                    interval * 60
+                )
+
+
+                state = load_state()
+
+                wallpapers = (
+                    discover_wallpapers()
+                )
+
+                families = (
+                    build_families(
+                        wallpapers
+                    )
+                )
+
+                continue
+
+
+            # ================================================
+            # FAMILY TIME
+            # ================================================
+
+            if mode == "family-time":
+
+                family = state.get(
+                    "family"
+                )
+
+                if family not in families:
+
+                    family = random.choice(
+                        list(
+                            families.keys()
+                        )
+                    )
+
+
+                wallpaper, family = (
+                    choose_family_time(
+                        families,
+                        family
+                    )
+                )
+
+
+                if wallpaper:
+
+                    self.apply(
+                        wallpaper,
+                        state,
+                        family,
+                    )
+
+
+                self.interruptible_sleep(
+                    next_time_boundary()
+                )
+
+
+                state = load_state()
+
+                wallpapers = (
+                    discover_wallpapers()
+                )
+
+                families = (
+                    build_families(
+                        wallpapers
+                    )
+                )
+
+                continue
+
+
+            # ================================================
+            # ROTATE-TIME
+            # ================================================
+
+            if mode == "rotate-time":
+
+                interval = max(
+                    1,
+                    int(
+                        state.get(
+                            "interval",
+                            30
+                        )
+                    )
+                )
+
+
+                previous_family = (
+                    state.get(
+                        "family"
+                    )
+                )
+
+
+                family = choose_family(
+                    families,
+                    previous_family,
+                )
+
+
+                wallpaper, family = (
+                    choose_family_time(
+                        families,
+                        family
+                    )
+                )
+
+
+                if wallpaper:
+
+                    self.apply(
+                        wallpaper,
+                        state,
+                        family,
+                    )
+
+
+                interval_seconds = (
+                    interval * 60
+                )
+
+                time_boundary_seconds = (
+                    next_time_boundary()
+                )
+
+
+                self.interruptible_sleep(
+                    min(
+                        interval_seconds,
+                        time_boundary_seconds,
+                    )
+                )
+
+
+                state = load_state()
+
+                wallpapers = (
+                    discover_wallpapers()
+                )
+
+                families = (
+                    build_families(
+                        wallpapers
+                    )
+                )
+
+                continue
+
+
+            # ================================================
+            # UNKNOWN MODE
+            # ================================================
+
+            print(
+                f"wallpaper: unknown mode "
+                f"'{mode}', falling back to manual",
+                file=sys.stderr,
+            )
+
+            state["mode"] = "manual"
+
+            save_state(state)
+
+
+    def interruptible_sleep(
+        self,
+        seconds
+    ):
+
+        end = (
+            time.monotonic()
+            + seconds
+        )
+
+
+        while self.running:
+
+            remaining = (
+                end
+                - time.monotonic()
+            )
+
+            if remaining <= 0:
+                break
+
+            time.sleep(
+                min(
+                    remaining,
+                    3600
+                )
+            )
+
+
+# ============================================================
+# COMMANDS
+# ============================================================
+
+def command_set(path):
+
+    state = load_state()
+
+    path = (
+        Path(path)
+        .expanduser()
+        .resolve()
+    )
+
+
+    if not path.exists():
+
+        print(
+            f"wallpaper: not found: {path}",
+            file=sys.stderr,
+        )
+
+        return 1
+
+
+    if not set_wallpaper(path):
+        return 1
+
+
+    state["previous"] = (
+        state.get("current")
+    )
+
+    state["current"] = str(path)
+
+
+    family, _ = split_family(path)
+
+    state["family"] = family
+
+    save_state(state)
+
+    print(
+        f"wallpaper: {path}"
+    )
+
+    return 0
+
+
+def command_next():
+
+    state = load_state()
+
+    wallpapers = (
+        discover_wallpapers()
+    )
+
+
+    if not wallpapers:
+
+        print(
+            "wallpaper: no wallpapers found"
+        )
+
+        return 1
+
+
+    current = state.get(
+        "current"
+    )
+
+
+    try:
+
+        index = next(
+            i
+            for i, path
+            in enumerate(wallpapers)
+            if str(path) == current
+        )
+
+    except StopIteration:
+
+        index = -1
+
+
+    next_index = (
+        index + 1
+    ) % len(wallpapers)
+
+
+    return command_set(
+        wallpapers[next_index]
+    )
+
+
+def command_previous():
+
+    state = load_state()
+
+    wallpapers = (
+        discover_wallpapers()
+    )
+
+
+    if not wallpapers:
+
+        print(
+            "wallpaper: no wallpapers found"
+        )
+
+        return 1
+
+
+    current = state.get(
+        "current"
+    )
+
+
+    try:
+
+        index = next(
+            i
+            for i, path
+            in enumerate(wallpapers)
+            if str(path) == current
+        )
+
+    except StopIteration:
+
+        index = 0
+
+
+    previous_index = (
+        index - 1
+    ) % len(wallpapers)
+
+
+    return command_set(
+        wallpapers[previous_index]
+    )
+
+
+def command_mode(args):
+
+    state = load_state()
+
+    mode = args.mode
+
+
+    if mode == "manual":
+
+        state["mode"] = "manual"
+
+
+    elif mode == "periodic":
+
+        if args.interval is None:
+
+            print(
+                "wallpaper: periodic mode "
+                "requires minutes",
+                file=sys.stderr,
+            )
+
+            return 1
+
+
+        state["mode"] = "periodic"
+
+        state["interval"] = (
+            args.interval
+        )
+
+
+    elif mode == "family-time":
+
+        state["mode"] = "family-time"
+
+
+    elif mode == "rotate-time":
+
+        if args.interval is None:
+
+            print(
+                "wallpaper: rotate-time "
+                "requires minutes",
+                file=sys.stderr,
+            )
+
+            return 1
+
+
+        state["mode"] = "rotate-time"
+
+        state["interval"] = (
+            args.interval
+        )
+
+
+    save_state(state)
+
+
+    print(
+        f"wallpaper: mode="
+        f"{state['mode']}"
+        + (
+            f" interval="
+            f"{state['interval']}m"
+            if state["mode"]
+            in {
+                "periodic",
+                "rotate-time",
+            }
+            else ""
+        )
+    )
+
+
+    return 0
+
+
+def command_status():
+
+    state = load_state()
+
+    print(
+        "Wallpaper controller"
+    )
+
+    print(
+        "--------------------"
+    )
+
+    print(
+        f"directory : "
+        f"{WALLPAPER_DIR}"
+    )
+
+    print(
+        f"mode      : "
+        f"{state.get('mode')}"
+    )
+
+    print(
+        f"interval  : "
+        f"{state.get('interval')} min"
+    )
+
+    print(
+        f"current   : "
+        f"{state.get('current')}"
+    )
+
+    print(
+        f"previous  : "
+        f"{state.get('previous')}"
+    )
+
+    print(
+        f"family    : "
+        f"{state.get('family')}"
+    )
+
+
+    if state.get("mode") in {
+        "family-time",
+        "rotate-time",
+    }:
+
+        print(
+            f"time slot : "
+            f"{current_slot()}"
+        )
+
+
+    print(
+        f"running   : "
+        f"{'yes' if is_running() else 'no'}"
+    )
+
+    return 0
+
+
+def command_reload():
+
+    state = load_state()
+
+    save_state(state)
+
+    print(
+        "wallpaper: state reloaded"
+    )
+
+    return 0
+
+
+# ============================================================
+# CLI
+# ============================================================
+
+def build_parser():
+
+    parser = argparse.ArgumentParser(
+        prog="wallpaper",
+        description=(
+            "Lightweight awww wallpaper controller"
+        ),
+    )
+
+
+    sub = parser.add_subparsers(
+        dest="command",
+        required=True,
+    )
+
+
+    sub.add_parser(
+        "start",
+        help="start controller",
+    )
+
+
+    p = sub.add_parser(
+        "set",
+        help="set wallpaper",
+    )
+
+    p.add_argument(
+        "path"
+    )
+
+
+    sub.add_parser(
+        "next",
+        help="next wallpaper",
+    )
+
+
+    sub.add_parser(
+        "previous",
+        help="previous wallpaper",
+    )
+
+
+    p = sub.add_parser(
+        "mode",
+        help="change mode",
+    )
+
+    p.add_argument(
+        "mode",
+        choices=[
+            "manual",
+            "periodic",
+            "family-time",
+            "rotate-time",
+        ],
+    )
+
+    p.add_argument(
+        "interval",
+        nargs="?",
+        type=int,
+    )
+
+
+    sub.add_parser(
+        "status",
+        help="show status",
+    )
+
+
+    sub.add_parser(
+        "reload",
+        help="reload",
+    )
+
+
+    return parser
+
+
+def main():
+
+    parser = build_parser()
+
+    args = parser.parse_args()
+
+
+    if args.command == "start":
+
+        Controller().run()
+
+        return 0
+
+
+    if args.command == "set":
+
+        return command_set(
+            args.path
+        )
+
+
+    if args.command == "next":
+
+        return command_next()
+
+
+    if args.command == "previous":
+
+        return command_previous()
+
+
+    if args.command == "mode":
+
+        return command_mode(args)
+
+
+    if args.command == "status":
+
+        return command_status()
+
+
+    if args.command == "reload":
+
+        return command_reload()
+
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

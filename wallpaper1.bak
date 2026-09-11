@@ -1,0 +1,567 @@
+#!/usr/bin/env python3
+
+import argparse
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+
+# ============================================================
+# PATHS
+# ============================================================
+
+HYPR_MAC_DIR = (
+    Path.home()
+    / ".config"
+    / "hypr-mac"
+)
+
+WALLPAPER_DIR = (
+    HYPR_MAC_DIR
+    / "wpp"
+)
+
+STATE_DIR = (
+    HYPR_MAC_DIR
+    / "wallpaper-state"
+)
+
+SOCKET_FILE = (
+    STATE_DIR
+    / "controller.sock"
+)
+
+CONTROLLER = (
+    STATE_DIR
+    / "controller.py"
+)
+
+
+# ============================================================
+# SOCKET COMMUNICATION
+# ============================================================
+
+def send(command):
+
+    if not SOCKET_FILE.exists():
+
+        print(
+            "wallpaper: controller is not running",
+            file=sys.stderr,
+        )
+
+        print(
+            "Start it with: wallpaper start",
+            file=sys.stderr,
+        )
+
+        return 1
+
+    try:
+
+        with socket.socket(
+            socket.AF_UNIX,
+            socket.SOCK_STREAM,
+        ) as sock:
+
+            sock.connect(
+                str(SOCKET_FILE)
+            )
+
+            sock.sendall(
+                command.encode("utf-8")
+            )
+
+            response = sock.recv(
+                65536
+            ).decode("utf-8")
+
+    except (
+        ConnectionRefusedError,
+        FileNotFoundError,
+    ):
+
+        print(
+            "wallpaper: controller is not running",
+            file=sys.stderr,
+        )
+
+        return 1
+
+    print(
+        response,
+        end=""
+    )
+
+    if response.startswith("error:"):
+        return 1
+
+    return 0
+
+
+# ============================================================
+# START
+# ============================================================
+
+def start_controller():
+
+    if SOCKET_FILE.exists():
+
+        # Don't trust the existence of the socket alone.
+        try:
+
+            with socket.socket(
+                socket.AF_UNIX,
+                socket.SOCK_STREAM,
+            ) as sock:
+
+                sock.settimeout(0.2)
+
+                sock.connect(
+                    str(SOCKET_FILE)
+                )
+
+                sock.sendall(
+                    b"status"
+                )
+
+                sock.recv(4096)
+
+            print(
+                "wallpaper: controller already running"
+            )
+
+            return 0
+
+        except (
+            ConnectionRefusedError,
+            FileNotFoundError,
+            OSError,
+        ):
+
+            # Stale socket.
+            try:
+                SOCKET_FILE.unlink()
+            except OSError:
+                pass
+
+    if not CONTROLLER.exists():
+
+        print(
+            f"wallpaper: controller not found:\n"
+            f"  {CONTROLLER}",
+            file=sys.stderr,
+        )
+
+        return 1
+
+    try:
+
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(CONTROLLER),
+            ],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    except OSError as e:
+
+        print(
+            f"wallpaper: failed to start controller: {e}",
+            file=sys.stderr,
+        )
+
+        return 1
+
+    print(
+        "wallpaper: controller started"
+    )
+
+    return 0
+
+
+# ============================================================
+# ARGUMENT PARSER
+# ============================================================
+
+DESCRIPTION = """
+A lightweight awww wallpaper controller for Hyprland.
+
+Wallpaper directory:
+  ~/.config/hypr-mac/wpp/
+
+State and runtime files:
+  ~/.config/hypr-mac/wallpaper-state/
+
+The controller stays idle when nothing is happening.
+Automatic modes wake it only when a wallpaper change is due,
+while commands are delivered through a Unix socket.
+"""
+
+
+EPILOG = """
+Examples:
+
+  Start the controller:
+    wallpaper start
+
+  See current state:
+    wallpaper status
+
+  Set a specific wallpaper:
+    wallpaper set first-day.png
+
+  Go forward/backward:
+    wallpaper next
+    wallpaper previous
+
+  Disable automatic changes:
+    wallpaper mode manual
+
+  Change wallpaper every 5 minutes:
+    wallpaper mode periodic 5
+
+  Change wallpaper every 30 minutes:
+    wallpaper mode periodic 30
+
+  Keep one family and follow its time variants:
+    wallpaper mode family-time
+
+  Rotate families every 30 minutes while following
+  the current time-of-day variant:
+    wallpaper mode rotate-time 30
+
+  Force a rescan after adding/removing wallpapers:
+    wallpaper reload
+
+Filename completion is provided separately by the shell.
+Try:
+
+  wallpaper set <Tab>
+
+or:
+
+  wallpaper set fir<Tab>
+"""
+
+
+def build_parser():
+
+    parser = argparse.ArgumentParser(
+        prog="wallpaper",
+        description=DESCRIPTION,
+        epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+
+    subparsers = parser.add_subparsers(
+        dest="command",
+        metavar="COMMAND",
+    )
+
+
+    # --------------------------------------------------------
+    # start
+    # --------------------------------------------------------
+
+    subparsers.add_parser(
+        "start",
+        help="start the background controller",
+    )
+
+
+    # --------------------------------------------------------
+    # stop
+    # --------------------------------------------------------
+
+    subparsers.add_parser(
+        "stop",
+        help="stop the background controller",
+    )
+
+
+    # --------------------------------------------------------
+    # status
+    # --------------------------------------------------------
+
+    subparsers.add_parser(
+        "status",
+        help="show current mode and wallpaper",
+    )
+
+
+    # --------------------------------------------------------
+    # reload
+    # --------------------------------------------------------
+
+    subparsers.add_parser(
+        "reload",
+        help="rescan the wallpaper directory",
+    )
+
+
+    # --------------------------------------------------------
+    # next
+    # --------------------------------------------------------
+
+    subparsers.add_parser(
+        "next",
+        help="select the next wallpaper",
+    )
+
+
+    # --------------------------------------------------------
+    # previous
+    # --------------------------------------------------------
+
+    subparsers.add_parser(
+        "previous",
+        help="select the previous wallpaper",
+    )
+
+
+    # --------------------------------------------------------
+    # set
+    # --------------------------------------------------------
+
+    set_parser = subparsers.add_parser(
+        "set",
+        help="set a specific wallpaper",
+    )
+
+    set_parser.add_argument(
+        "wallpaper",
+        help="wallpaper filename or path",
+    )
+
+
+    # --------------------------------------------------------
+    # mode
+    # --------------------------------------------------------
+
+    mode_parser = subparsers.add_parser(
+        "mode",
+        help="change automatic wallpaper mode",
+    )
+
+    mode_subparsers = (
+        mode_parser.add_subparsers(
+            dest="mode",
+            metavar="MODE",
+        )
+    )
+
+
+    mode_subparsers.add_parser(
+        "manual",
+        help="no automatic wallpaper changes",
+    )
+
+
+    periodic_parser = mode_subparsers.add_parser(
+        "periodic",
+        help="random wallpaper every N minutes",
+    )
+
+    periodic_parser.add_argument(
+        "minutes",
+        type=int,
+        help="minutes between wallpaper changes",
+    )
+
+
+    mode_subparsers.add_parser(
+        "family-time",
+        help=(
+            "stay in one family and select its "
+            "variant according to time"
+        ),
+    )
+
+
+    rotate_parser = mode_subparsers.add_parser(
+        "rotate-time",
+        help=(
+            "rotate families every N minutes and "
+            "select the time-appropriate variant"
+        ),
+    )
+
+    rotate_parser.add_argument(
+        "minutes",
+        type=int,
+        help="minutes between family changes",
+    )
+
+
+    return parser
+
+
+# ============================================================
+# COMMAND HANDLING
+# ============================================================
+
+def main():
+
+    parser = build_parser()
+
+    args = parser.parse_args()
+
+
+    # --------------------------------------------------------
+    # No command
+    # --------------------------------------------------------
+
+    if args.command is None:
+
+        parser.print_help()
+
+        return 0
+
+
+    # --------------------------------------------------------
+    # start
+    # --------------------------------------------------------
+
+    if args.command == "start":
+
+        return start_controller()
+
+
+    # --------------------------------------------------------
+    # Simple commands
+    # --------------------------------------------------------
+
+    if args.command == "stop":
+
+        return send("stop")
+
+
+    if args.command == "status":
+
+        return send("status")
+
+
+    if args.command == "reload":
+
+        return send("reload")
+
+
+    if args.command == "next":
+
+        return send("next")
+
+
+    if args.command == "previous":
+
+        return send("previous")
+
+
+    # --------------------------------------------------------
+    # set
+    # --------------------------------------------------------
+
+    if args.command == "set":
+
+        path = Path(
+            args.wallpaper
+        ).expanduser()
+
+        if not path.is_absolute():
+
+            path = (
+                WALLPAPER_DIR
+                / path
+            )
+
+        return send(
+            f"set {path}"
+        )
+
+
+    # --------------------------------------------------------
+    # mode
+    # --------------------------------------------------------
+
+    if args.command == "mode":
+
+        if args.mode is None:
+
+            mode_parser = next(
+                action
+                for action in parser._actions
+                if action.dest == "command"
+            )
+
+            print(
+                "Usage: wallpaper mode "
+                "{manual,periodic,family-time,rotate-time}",
+                file=sys.stderr,
+            )
+
+            return 1
+
+
+        if args.mode == "manual":
+
+            return send(
+                "mode manual"
+            )
+
+
+        if args.mode == "periodic":
+
+            if args.minutes < 1:
+
+                print(
+                    "wallpaper: minutes must be >= 1",
+                    file=sys.stderr,
+                )
+
+                return 1
+
+            return send(
+                f"mode periodic "
+                f"{args.minutes}"
+            )
+
+
+        if args.mode == "family-time":
+
+            return send(
+                "mode family-time"
+            )
+
+
+        if args.mode == "rotate-time":
+
+            if args.minutes < 1:
+
+                print(
+                    "wallpaper: minutes must be >= 1",
+                    file=sys.stderr,
+                )
+
+                return 1
+
+            return send(
+                f"mode rotate-time "
+                f"{args.minutes}"
+            )
+
+
+    parser.print_help()
+
+    return 1
+
+
+if __name__ == "__main__":
+
+    sys.exit(
+        main()
+    )

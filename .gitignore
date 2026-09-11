@@ -1,0 +1,6 @@
+wallpaper-state/state.json
+wallpaper-state/controller.sock
+wallpaper-state/current
+__pycache__/
+*.py[cod]
+

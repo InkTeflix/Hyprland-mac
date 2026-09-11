@@ -1,0 +1,321 @@
+#!/usr/bin/env python3
+
+import socket
+import sys
+
+from pathlib import Path
+
+
+STATE_DIR = (
+    Path.home()
+    / ".config"
+    / "hypr-mac"
+    / "wallpaper-state"
+)
+
+SOCKET_FILE = (
+    STATE_DIR
+    / "controller.sock"
+)
+
+
+def send(command):
+
+    if not SOCKET_FILE.exists():
+
+        print(
+            "wallpaper: controller is not running",
+            file=sys.stderr,
+        )
+
+        print(
+            "Start it with:",
+            file=sys.stderr,
+        )
+
+        print(
+            "  wallpaper start",
+            file=sys.stderr,
+        )
+
+        return 1
+
+
+    try:
+
+        with socket.socket(
+            socket.AF_UNIX,
+            socket.SOCK_STREAM,
+        ) as sock:
+
+            sock.connect(
+                str(SOCKET_FILE)
+            )
+
+            sock.sendall(
+                command.encode(
+                    "utf-8"
+                )
+            )
+
+            response = sock.recv(
+                65536
+            ).decode(
+                "utf-8"
+            )
+
+
+    except (
+        ConnectionRefusedError,
+        FileNotFoundError,
+    ):
+
+        print(
+            "wallpaper: controller is not running",
+            file=sys.stderr,
+        )
+
+        return 1
+
+
+    print(
+        response,
+        end=""
+    )
+
+
+    if response.startswith(
+        "error:"
+    ):
+
+        return 1
+
+    return 0
+
+
+def usage():
+
+    print(
+        """
+Usage:
+
+  wallpaper start
+  wallpaper stop
+
+  wallpaper set <file>
+  wallpaper next
+  wallpaper previous
+
+  wallpaper mode manual
+  wallpaper mode periodic <minutes>
+  wallpaper mode family-time
+  wallpaper mode rotate-time <minutes>
+
+  wallpaper status
+  wallpaper reload
+"""
+    )
+
+
+def main():
+
+    if len(sys.argv) < 2:
+
+        usage()
+
+        return 1
+
+
+    command = sys.argv[1]
+
+
+    # --------------------------------------------------------
+    # START
+    # --------------------------------------------------------
+
+    if command == "start":
+
+        if SOCKET_FILE.exists():
+
+            print(
+                "wallpaper: "
+                "controller already appears to be running"
+            )
+
+            return 0
+
+
+        import subprocess
+
+        controller = (
+            STATE_DIR
+            / "controller.py"
+        )
+
+
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(controller),
+            ],
+            start_new_session=True,
+        )
+
+
+        print(
+            "wallpaper: controller started"
+        )
+
+        return 0
+
+
+    # --------------------------------------------------------
+    # Everything else
+    # --------------------------------------------------------
+
+    if command == "set":
+
+        if len(sys.argv) < 3:
+
+            print(
+                "wallpaper: "
+                "missing wallpaper path",
+                file=sys.stderr,
+            )
+
+            return 1
+
+
+        # Paths can contain spaces.
+        path = " ".join(
+            sys.argv[2:]
+        )
+
+        return send(
+            f"set {path}"
+        )
+
+
+    if command == "next":
+
+        return send(
+            "next"
+        )
+
+
+    if command == "previous":
+
+        return send(
+            "previous"
+        )
+
+
+    if command == "status":
+
+        return send(
+            "status"
+        )
+
+
+    if command == "reload":
+
+        return send(
+            "reload"
+        )
+
+
+    if command == "stop":
+
+        return send(
+            "stop"
+        )
+
+
+    if command == "mode":
+
+        if len(sys.argv) < 3:
+
+            print(
+                "wallpaper: "
+                "missing mode",
+                file=sys.stderr,
+            )
+
+            return 1
+
+
+        mode = sys.argv[2]
+
+
+        if mode == "manual":
+
+            return send(
+                "mode manual"
+            )
+
+
+        if mode == "periodic":
+
+            if len(sys.argv) < 4:
+
+                print(
+                    "Usage: "
+                    "wallpaper mode periodic <minutes>",
+                    file=sys.stderr,
+                )
+
+                return 1
+
+
+            return send(
+                "mode periodic "
+                + sys.argv[3]
+            )
+
+
+        if mode == "family-time":
+
+            return send(
+                "mode family-time"
+            )
+
+
+        if mode == "rotate-time":
+
+            if len(sys.argv) < 4:
+
+                print(
+                    "Usage: "
+                    "wallpaper mode rotate-time "
+                    "<minutes>",
+                    file=sys.stderr,
+                )
+
+                return 1
+
+
+            return send(
+                "mode rotate-time "
+                + sys.argv[3]
+            )
+
+
+        print(
+            f"wallpaper: "
+            f"unknown mode '{mode}'",
+            file=sys.stderr,
+        )
+
+        return 1
+
+
+    usage()
+
+    return 1
+
+
+if __name__ == "__main__":
+
+    sys.exit(
+        main()
+    )
