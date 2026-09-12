@@ -121,9 +121,6 @@ selector = selectors.DefaultSelector()
 server = None
 
 wallpapers = []
-wallpaper_dir_mtime_ns = None
-family_cache = {}
-schedule_cache = {}
 
 state = {
     "current": None,
@@ -159,35 +156,14 @@ def is_image(path):
     )
 
 
-def _wallpaper_dir_signature():
-
-    try:
-        return WALLPAPER_DIR.stat().st_mtime_ns
-    except OSError:
-        return None
-
-
-def scan_wallpapers(force=False):
+def scan_wallpapers():
 
     global wallpapers
-    global wallpaper_dir_mtime_ns
-    global family_cache
-    global schedule_cache
-
-    signature = _wallpaper_dir_signature()
-
-    if (
-        not force
-        and wallpaper_dir_mtime_ns == signature
-    ):
-        return wallpapers
 
     if not WALLPAPER_DIR.exists():
 
         wallpapers = []
-        wallpaper_dir_mtime_ns = signature
-        family_cache = {}
-        schedule_cache = {}
+
         return wallpapers
 
     try:
@@ -201,10 +177,6 @@ def scan_wallpapers(force=False):
             key=lambda p: p.name.lower(),
         )
 
-        wallpaper_dir_mtime_ns = signature
-        family_cache = {}
-        schedule_cache = {}
-
     except OSError as e:
 
         log(
@@ -212,9 +184,6 @@ def scan_wallpapers(force=False):
         )
 
         wallpapers = []
-        wallpaper_dir_mtime_ns = signature
-        family_cache = {}
-        schedule_cache = {}
 
     return wallpapers
 
@@ -742,18 +711,13 @@ def split_family(path):
 
 def build_families():
 
-    global family_cache
-
-    scan_wallpapers()
-
-    if family_cache:
-        return family_cache
-
     families = {}
 
     for path in wallpapers:
 
-        family, variant = split_family(path)
+        family, variant = (
+            split_family(path)
+        )
 
         families.setdefault(
             family,
@@ -765,9 +729,7 @@ def build_families():
             )
         )
 
-    family_cache = families
-
-    return family_cache
+    return families
 
 
 # ============================================================
@@ -882,9 +844,7 @@ def choose_time_variant_for_slot(
 
         return None
 
-    best = None
-    best_score = 1000
-    best_name = None
+    scored = []
 
     for path, variant in members:
 
@@ -893,23 +853,28 @@ def choose_time_variant_for_slot(
             desired,
         )
 
-        name = path.name.lower()
+        if score < 1000:
 
-        if (
-            score < best_score
-            or (
-                score == best_score
-                and (
-                    best_name is None
-                    or name < best_name
+            scored.append(
+                (
+                    score,
+                    path.name.lower(),
+                    path,
                 )
             )
-        ):
-            best = path
-            best_score = score
-            best_name = name
 
-    return best
+    if not scored:
+
+        return None
+
+    scored.sort(
+        key=lambda item: (
+            item[0],
+            item[1],
+        )
+    )
+
+    return scored[0][2]
 
 
 def choose_time_variant(
@@ -925,15 +890,6 @@ def choose_time_variant(
 def family_time_schedule(
     family,
 ):
-
-    global schedule_cache
-
-    scan_wallpapers()
-
-    cached = schedule_cache.get(family)
-
-    if cached is not None:
-        return cached
 
     schedule = []
 
@@ -954,9 +910,7 @@ def family_time_schedule(
                 )
             )
 
-    schedule_cache[family] = tuple(schedule)
-
-    return schedule_cache[family]
+    return schedule
 
 
 def next_family_change(
@@ -966,6 +920,7 @@ def next_family_change(
 ):
 
     if now is None:
+
         now = time.time()
 
     schedule = family_time_schedule(
@@ -973,25 +928,35 @@ def next_family_change(
     )
 
     if not schedule:
+
         return None, None, None
 
     current_resolved = None
 
     if current_path:
+
         try:
             current_resolved = str(
                 Path(current_path).resolve()
             )
         except OSError:
-            current_resolved = str(current_path)
+            current_resolved = str(
+                current_path
+            )
 
-    local_now = datetime.fromtimestamp(now)
-    today = local_now.date()
+    local_now = datetime.fromtimestamp(
+        now
+    )
 
-    # The schedule is sorted by hour. Check today's remaining
-    # boundaries first, then tomorrow's boundaries. This is enough
-    # because the schedule repeats daily.
-    for day in (today, today + timedelta(days=1)):
+    # Search at most one full week. This is tiny work (7 * the
+    # number of configured time slots) and happens only when a
+    # schedule is established or a scheduled boundary is reached.
+    for day_offset in range(8):
+
+        day = (
+            local_now
+            + timedelta(days=day_offset)
+        ).date()
 
         for name, hour, path in schedule:
 
@@ -1007,12 +972,15 @@ def next_family_change(
             if candidate_ts <= now:
                 continue
 
-            path_string = str(path)
+            path_string = str(
+                path.resolve()
+            )
 
             if (
                 current_resolved is None
                 or path_string != current_resolved
             ):
+
                 return (
                     candidate_ts,
                     name,
@@ -1408,55 +1376,51 @@ def automatic_tick():
 
 def restart_controller():
 
-    # Kept as a compatibility helper for callers that may still
-    # reference it. Reload is now handled in-process so that a
-    # wallpaper reload never creates a second controller process.
-    scan_wallpapers(force=True)
-
-    if state.get("mode") == "family-time":
-
-        family = state.get("family")
-
-        if not family:
-            current = state.get("current")
-            if current:
-                family, _ = split_family(Path(current))
-                state["family"] = family
-
-        if family:
-            selected = choose_time_variant(family)
-            current = state.get("current")
-
-            if (
-                selected is not None
-                and str(selected) != str(current)
-            ):
-                apply_wallpaper(
-                    selected,
-                    "family-time",
-                )
-
-            set_family_next_change()
+    """Restart this controller in-place after the reply is sent."""
 
     save_state()
+
+    # The caller sends the response first, then the main loop
+    # calls this function.  Replacing the process avoids having
+    # two controllers race over the same Unix socket.
+    try:
+
+        cleanup()
+
+        os.execv(
+            sys.executable,
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+            ],
+        )
+
+    except OSError as e:
+
+        log(
+            f"could not restart controller: {e}"
+        )
+
+        return False
+
     return True
 
 
 def command_reload():
 
+    global restart_requested
+
     count = len(
-        scan_wallpapers(force=True)
+        scan_wallpapers()
     )
 
-    restart_controller()
-
-    global restart_requested
-    restart_requested = False
+    restart_requested = True
 
     return (
-        f"reloaded; found {count} wallpaper"
+        f"reload requested; found {count} wallpaper"
         + ("s" if count != 1 else "")
         + "\n"
+        + "reloading\n"
     )
 
 
@@ -2619,6 +2583,15 @@ def main():
                     key.fileobj,
                     mask,
                 )
+
+            if restart_requested:
+
+                restart_controller()
+
+                # execv() should never return on success.
+                # If it does, stop rather than allowing two
+                # controller lifecycles to overlap.
+                running = False
 
             if running:
 
