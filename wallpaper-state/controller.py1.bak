@@ -792,7 +792,6 @@ def time_variant_score(
             "evening": 2,
             "dusk": 4,
         },
-
     }
 
     return aliases.get(
@@ -1279,10 +1278,7 @@ def command_reload():
     running = False
 
     return (
-        f"reload requested; found {count} wallpaper"
-        + ("s" if count != 1 else "")
-        + "\n"
-        + "reloading\n"
+        "reloading\n"
     )
 
 
@@ -1318,41 +1314,37 @@ def command_status():
         "next_change"
     )
 
-    lines = []
-
     # --------------------------------------------------------
     # Controller
     # --------------------------------------------------------
 
-    lines.append(
+    print(
         "Controller: running"
     )
 
-    lines.append(
+    print(
         f"PID:        {os.getpid()}"
     )
 
-    lines.append(
-        ""
-    )
+    print()
 
     # --------------------------------------------------------
     # Mode
     # --------------------------------------------------------
 
-    lines.append(
+    print(
         f"Mode:       {mode}"
     )
 
     if interval:
 
-        lines.append(
+        print(
             f"Interval:   {interval} min"
         )
 
     else:
 
-        lines.append(
+        print(
             "Interval:   -"
         )
 
@@ -1360,11 +1352,9 @@ def command_status():
     # Wallpaper count
     # --------------------------------------------------------
 
-    lines.append(
-        ""
-    )
+    print()
 
-    lines.append(
+    print(
         f"Wallpapers: {len(wallpapers)}"
     )
 
@@ -1374,30 +1364,14 @@ def command_status():
 
     if current:
 
-        lines.append(
+        print(
             f"Last wpp:   {Path(current).name}"
         )
 
     else:
 
-        lines.append(
+        print(
             "Last wpp:   -"
-        )
-
-    # --------------------------------------------------------
-    # Previous wallpaper selected by wpp
-    # --------------------------------------------------------
-
-    if previous:
-
-        lines.append(
-            f"Previous:   {Path(previous).name}"
-        )
-
-    else:
-
-        lines.append(
-            "Previous:   -"
         )
 
     # --------------------------------------------------------
@@ -1428,13 +1402,13 @@ def command_status():
             awww_paths[0]
         )
 
-        lines.append(
+        print(
             f"awww:       {awww_current.name}"
         )
 
     elif len(awww_paths) > 1:
 
-        lines.append(
+        print(
             f"awww:       {len(awww_paths)} wallpapers"
         )
 
@@ -1446,13 +1420,13 @@ def command_status():
         and "error" in awww_data
     ):
 
-        lines.append(
+        print(
             "awww:       unavailable"
         )
 
     else:
 
-        lines.append(
+        print(
             "awww:       -"
         )
 
@@ -1460,15 +1434,13 @@ def command_status():
     # Current symlink
     # --------------------------------------------------------
 
-    lines.append(
-        ""
-    )
+    print()
 
-    lines.append(
+    print(
         "Current link:"
     )
 
-    lines.append(
+    print(
         f"  {CURRENT_LINK}"
     )
 
@@ -1478,25 +1450,25 @@ def command_status():
 
             target = CURRENT_LINK.resolve()
 
-            lines.append(
+            print(
                 f"  -> {target}"
             )
 
         except OSError:
 
-            lines.append(
+            print(
                 "  -> <broken symlink>"
             )
 
     elif CURRENT_LINK.exists():
 
-        lines.append(
+        print(
             "  -> <not a symlink>"
         )
 
     else:
 
-        lines.append(
+        print(
             "  -> <not present>"
         )
 
@@ -1519,19 +1491,19 @@ def command_status():
 
         if minutes:
 
-            lines.append(
+            print(
                 f"Next change: {minutes}m {seconds}s"
             )
 
         else:
 
-            lines.append(
+            print(
                 f"Next change: {seconds}s"
             )
 
     else:
 
-        lines.append(
+        print(
             "Next change: -"
         )
 
@@ -1558,11 +1530,9 @@ def command_status():
 
             if wpp_path != awww_path:
 
-                lines.append(
-                    ""
-                )
+                print()
 
-                lines.append(
+                print(
                     "Notice: awww is displaying a "
                     "different wallpaper than the "
                     "last one selected by wpp."
@@ -1572,10 +1542,7 @@ def command_status():
 
             pass
 
-    return (
-        "\n".join(lines)
-        + "\n"
-    )
+    return "ok\n"
 
 
 # ============================================================
