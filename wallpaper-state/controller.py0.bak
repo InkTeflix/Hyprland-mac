@@ -1504,10 +1504,6 @@ def command_status():
         f"Mode:       {mode}",
     ]
 
-    # --------------------------------------------------------
-    # Mode-specific state
-    # --------------------------------------------------------
-
     if mode == "family-time":
 
         family = state.get(
@@ -1518,39 +1514,26 @@ def command_status():
             f"Family:     {family or '-'}"
         )
 
-    elif mode in {
-        "periodic",
-        "rotate-time",
-    }:
+    elif interval:
 
         lines.append(
             f"Interval:   {interval} min"
-            if interval
-            else "Interval:   -"
         )
 
-        if mode == "rotate-time":
+    else:
 
-            lines.append(
-                f"Family:     {state.get('family') or '-'}"
-            )
-
-    # --------------------------------------------------------
-    # Wallpaper state
-    # --------------------------------------------------------
+        lines.append(
+            "Interval:   -"
+        )
 
     lines.extend(
         [
             "",
             f"Wallpapers: {len(wallpapers)}",
-            f"Current:    {Path(current).name if current else '-'}",
+            f"Last wpp:   {Path(current).name if current else '-'}",
             f"Previous:   {Path(previous).name if previous else '-'}",
         ]
     )
-
-    # --------------------------------------------------------
-    # Family-time schedule
-    # --------------------------------------------------------
 
     if mode == "family-time":
 
@@ -1560,10 +1543,6 @@ def command_status():
 
         if family:
 
-            schedule = family_time_schedule(
-                family
-            )
-
             lines.extend(
                 [
                     "",
@@ -1571,15 +1550,13 @@ def command_status():
                 ]
             )
 
-            for name, hour, path in schedule:
+            for name, hour, path in family_time_schedule(
+                family
+            ):
 
                 lines.append(
                     f"  {format_schedule_time(hour)}  {path.name}"
                 )
-
-    # --------------------------------------------------------
-    # Actual wallpaper reported by awww
-    # --------------------------------------------------------
 
     # awww is queried only for an explicit status request; it
     # does not run in the background.
@@ -1635,10 +1612,6 @@ def command_status():
             "awww:       -"
         )
 
-    # --------------------------------------------------------
-    # Current symlink
-    # --------------------------------------------------------
-
     lines.extend(
         [
             "",
@@ -1650,13 +1623,10 @@ def command_status():
     if CURRENT_LINK.is_symlink():
 
         try:
-
             lines.append(
                 f"  -> {CURRENT_LINK.resolve()}"
             )
-
         except OSError:
-
             lines.append(
                 "  -> <broken symlink>"
             )
@@ -1673,51 +1643,7 @@ def command_status():
             "  -> <not present>"
         )
 
-    # --------------------------------------------------------
-    # Last change
-    # --------------------------------------------------------
-
-    last_changed = state.get(
-        "last_changed"
-    )
-
-    last_reason = state.get(
-        "last_reason"
-    )
-
-    if last_changed:
-
-        local_changed = datetime.fromtimestamp(
-            last_changed
-        )
-
-        reason = (
-            last_reason
-            or "unknown"
-        )
-
-        lines.extend(
-            [
-                "",
-                "Last change:",
-                f"  {local_changed:%Y-%m-%d %H:%M:%S}  ({reason})",
-            ]
-        )
-
-    else:
-
-        lines.extend(
-            [
-                "",
-                "Last change: -",
-            ]
-        )
-
-    # --------------------------------------------------------
-    # Next actual wallpaper change
-    # --------------------------------------------------------
-
-    if mode == "family-time":
+    if mode == "family-time" and next_change:
 
         next_ts, next_name, next_path = next_family_change(
             state.get("family"),
@@ -1739,25 +1665,12 @@ def command_status():
                 ]
             )
 
-        else:
-
-            lines.extend(
-                [
-                    "",
-                    "Next change: none",
-                ]
-            )
-
-    elif mode in {
-        "periodic",
-        "rotate-time",
-    } and next_change:
+    elif next_change:
 
         lines.extend(
             [
                 "",
                 "Next change:",
-                f"  at {datetime.fromtimestamp(next_change):%H:%M}",
                 f"  in {format_duration(next_change - time.time())}",
             ]
         )
@@ -1767,13 +1680,9 @@ def command_status():
         lines.extend(
             [
                 "",
-                "Next change: disabled",
+                "Next change: -",
             ]
         )
-
-    # --------------------------------------------------------
-    # Detect external awww changes
-    # --------------------------------------------------------
 
     if current and len(awww_paths) == 1:
 
@@ -1793,7 +1702,6 @@ def command_status():
                 )
 
         except OSError:
-
             pass
 
     return (

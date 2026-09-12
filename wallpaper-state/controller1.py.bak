@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import json
-from datetime import datetime, timedelta
 import os
 import random
 import re
@@ -83,15 +82,12 @@ TIME_SLOTS = {
 }
 
 
-# TIME_SLOTS is the single source of truth for family-time.
-# Each slot begins at the listed local hour and remains active
-# until the next slot begins.  The final slot (night) continues
-# through midnight until dawn.
-TIME_POINTS = tuple(
-    sorted(
-        TIME_SLOTS.items(),
-        key=lambda item: item[1],
-    )
+# Explicit time windows.
+TIME_POINTS = (
+    (5, "dawn"),
+    (9, "day"),
+    (17, "dusk"),
+    (21, "night"),
 )
 
 
@@ -114,7 +110,6 @@ TIME_NAMES = {
 # ============================================================
 
 running = True
-restart_requested = False
 
 selector = selectors.DefaultSelector()
 
@@ -742,7 +737,7 @@ def current_time_name():
 
     selected = "night"
 
-    for name, point in TIME_POINTS:
+    for point, name in TIME_POINTS:
 
         if hour >= point:
 
@@ -770,67 +765,47 @@ def time_variant_score(
 
         return 0
 
+    # Useful fallback mappings.
     aliases = {
 
         "dawn": {
             "morning": 1,
-            "light": 2,
-            "day": 3,
-        },
-
-        "morning": {
-            "dawn": 1,
-            "day": 2,
             "light": 3,
+            "day": 5,
         },
 
         "day": {
-            "afternoon": 1,
+            "light": 1,
             "morning": 2,
-            "light": 2,
-            "dawn": 3,
-        },
-
-        "afternoon": {
-            "day": 1,
-            "evening": 2,
-            "light": 3,
+            "afternoon": 2,
+            "dawn": 5,
         },
 
         "dusk": {
             "evening": 1,
-            "afternoon": 2,
-            "night": 3,
             "dark": 3,
-        },
-
-        "evening": {
-            "dusk": 1,
-            "night": 2,
-            "dark": 2,
-            "afternoon": 3,
+            "night": 4,
         },
 
         "night": {
             "dark": 1,
             "evening": 2,
-            "dusk": 3,
+            "dusk": 4,
         },
 
     }
 
     return aliases.get(
         desired,
-        {},
+        {}
     ).get(
         variant,
         1000,
     )
 
 
-def choose_time_variant_for_slot(
+def choose_time_variant(
     family,
-    desired,
 ):
 
     families = build_families()
@@ -844,6 +819,8 @@ def choose_time_variant_for_slot(
 
         return None
 
+    desired = current_time_name()
+
     scored = []
 
     for path, variant in members:
@@ -853,163 +830,21 @@ def choose_time_variant_for_slot(
             desired,
         )
 
-        if score < 1000:
-
-            scored.append(
-                (
-                    score,
-                    path.name.lower(),
-                    path,
-                )
+        scored.append(
+            (
+                score,
+                path,
             )
-
-    if not scored:
-
-        return None
+        )
 
     scored.sort(
         key=lambda item: (
             item[0],
-            item[1],
+            item[1].name.lower(),
         )
     )
 
-    return scored[0][2]
-
-
-def choose_time_variant(
-    family,
-):
-
-    return choose_time_variant_for_slot(
-        family,
-        current_time_name(),
-    )
-
-
-def family_time_schedule(
-    family,
-):
-
-    schedule = []
-
-    for name, hour in TIME_POINTS:
-
-        path = choose_time_variant_for_slot(
-            family,
-            name,
-        )
-
-        if path is not None:
-
-            schedule.append(
-                (
-                    name,
-                    hour,
-                    path,
-                )
-            )
-
-    return schedule
-
-
-def next_family_change(
-    family,
-    current_path=None,
-    now=None,
-):
-
-    if now is None:
-
-        now = time.time()
-
-    schedule = family_time_schedule(
-        family
-    )
-
-    if not schedule:
-
-        return None, None, None
-
-    current_resolved = None
-
-    if current_path:
-
-        try:
-            current_resolved = str(
-                Path(current_path).resolve()
-            )
-        except OSError:
-            current_resolved = str(
-                current_path
-            )
-
-    local_now = datetime.fromtimestamp(
-        now
-    )
-
-    # Search at most one full week. This is tiny work (7 * the
-    # number of configured time slots) and happens only when a
-    # schedule is established or a scheduled boundary is reached.
-    for day_offset in range(8):
-
-        day = (
-            local_now
-            + timedelta(days=day_offset)
-        ).date()
-
-        for name, hour, path in schedule:
-
-            candidate = datetime.combine(
-                day,
-                datetime.min.time(),
-            ).replace(
-                hour=hour,
-            )
-
-            candidate_ts = candidate.timestamp()
-
-            if candidate_ts <= now:
-                continue
-
-            path_string = str(
-                path.resolve()
-            )
-
-            if (
-                current_resolved is None
-                or path_string != current_resolved
-            ):
-
-                return (
-                    candidate_ts,
-                    name,
-                    path,
-                )
-
-    return None, None, None
-
-
-def set_family_next_change():
-
-    family = state.get(
-        "family"
-    )
-
-    if not family:
-
-        state["next_change"] = None
-
-        return None
-
-    next_change, _, _ = next_family_change(
-        family,
-        state.get("current"),
-    )
-
-    state["next_change"] = next_change
-
-    return next_change
+    return scored[0][1]
 
 
 def choose_random_family():
@@ -1166,7 +1001,22 @@ def set_mode(
 
         state["next_change"] = None
 
-    elif mode == "family-time":
+    else:
+
+        state["next_change"] = (
+            time.time()
+            + (
+                interval * 60
+                if interval
+                else 0
+            )
+        )
+
+    save_state()
+
+    # Immediately apply the appropriate wallpaper
+    # for time-based modes.
+    if mode == "family-time":
 
         current = state.get(
             "current"
@@ -1177,7 +1027,6 @@ def set_mode(
             family, _ = split_family(
                 Path(current)
             )
-            state["family"] = family
 
             selected = choose_time_variant(
                 family
@@ -1190,39 +1039,26 @@ def set_mode(
                     "family-time",
                 )
 
-        set_family_next_change()
+    elif mode == "rotate-time":
 
-    else:
-
-        state["next_change"] = (
-            time.time()
-            + interval * 60
+        selected_family = (
+            choose_random_family()
         )
 
-        if mode == "rotate-time":
+        if selected_family:
 
-            selected_family = (
-                choose_random_family()
+            selected = (
+                choose_time_variant(
+                    selected_family
+                )
             )
 
-            if selected_family:
+            if selected:
 
-                state["family"] = selected_family
-
-                selected = (
-                    choose_time_variant(
-                        selected_family
-                    )
+                apply_wallpaper(
+                    selected,
+                    "rotate-time",
                 )
-
-                if selected:
-
-                    apply_wallpaper(
-                        selected,
-                        "rotate-time",
-                    )
-
-    save_state()
 
     return (
         True,
@@ -1247,39 +1083,40 @@ def automatic_tick():
 
     now = time.time()
 
+    next_change = state.get(
+        "next_change"
+    )
+
+    # --------------------------------------------------------
+    # family-time
+    #
+    # Wake around once per minute so time boundaries are caught.
+    # --------------------------------------------------------
+
     if mode == "family-time":
 
-        family = state.get(
-            "family"
+        selected = state.get(
+            "current"
         )
 
-        if not family:
+        if selected:
 
-            current = state.get(
-                "current"
+            family, _ = (
+                split_family(
+                    Path(selected)
+                )
             )
 
-            if current:
-
-                family, _ = split_family(
-                    Path(current)
+            desired = (
+                choose_time_variant(
+                    family
                 )
-                state["family"] = family
-
-        if family:
-
-            desired = choose_time_variant(
-                family
             )
 
             if (
                 desired
-                and str(desired.resolve())
-                != str(
-                    Path(
-                        state.get("current", "")
-                    ).resolve()
-                )
+                and str(desired)
+                != state.get("current")
             ):
 
                 apply_wallpaper(
@@ -1287,14 +1124,17 @@ def automatic_tick():
                     "family-time",
                 )
 
-            set_family_next_change()
-            save_state()
+        state["next_change"] = (
+            now + 60
+        )
+
+        save_state()
 
         return
 
-    next_change = state.get(
-        "next_change"
-    )
+    # --------------------------------------------------------
+    # periodic / rotate-time
+    # --------------------------------------------------------
 
     if (
         next_change is not None
@@ -1315,6 +1155,7 @@ def automatic_tick():
             wallpapers
         )
 
+        # Avoid immediately selecting the same wallpaper.
         if (
             len(wallpapers) > 1
             and state.get("current")
@@ -1340,8 +1181,6 @@ def automatic_tick():
         family = choose_random_family()
 
         if family:
-
-            state["family"] = family
 
             selected = (
                 choose_time_variant(
@@ -1376,24 +1215,35 @@ def automatic_tick():
 
 def restart_controller():
 
-    """Restart this controller in-place after the reply is sent."""
+    """
+    Start a fresh controller process.
 
-    save_state()
+    State is deliberately saved before restarting.
+    The new process will:
+      - load state.json
+      - rescan the wallpaper directory
+      - restore the previous wallpaper
+      - restore the current mode
+      - create a fresh controller socket
+    """
 
-    # The caller sends the response first, then the main loop
-    # calls this function.  Replacing the process avoids having
-    # two controllers race over the same Unix socket.
     try:
 
-        cleanup()
+        save_state()
 
-        os.execv(
-            sys.executable,
+        subprocess.Popen(
             [
                 sys.executable,
                 str(Path(__file__).resolve()),
             ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
         )
+
+        return True
 
     except OSError as e:
 
@@ -1403,18 +1253,30 @@ def restart_controller():
 
         return False
 
-    return True
-
 
 def command_reload():
 
-    global restart_requested
-
+    # Refresh the directory before handing control
+    # to the new process.
     count = len(
         scan_wallpapers()
     )
 
-    restart_requested = True
+    log(
+        f"reload requested; found {count} "
+        f"wallpaper"
+        + ("s" if count != 1 else "")
+    )
+
+    if not restart_controller():
+
+        return (
+            "error: could not restart controller\n"
+        )
+
+    global running
+
+    running = False
 
     return (
         f"reload requested; found {count} wallpaper"
@@ -1428,52 +1290,11 @@ def command_reload():
 # STATUS
 # ============================================================
 
-def format_duration(seconds):
-
-    seconds = max(
-        0,
-        int(seconds),
-    )
-
-    days, seconds = divmod(
-        seconds,
-        86400,
-    )
-
-    hours, seconds = divmod(
-        seconds,
-        3600,
-    )
-
-    minutes, seconds = divmod(
-        seconds,
-        60,
-    )
-
-    parts = []
-
-    if days:
-        parts.append(f"{days}d")
-
-    if hours:
-        parts.append(f"{hours}h")
-
-    if minutes:
-        parts.append(f"{minutes}m")
-
-    if seconds or not parts:
-        parts.append(f"{seconds}s")
-
-    return " ".join(parts)
-
-
-def format_schedule_time(hour):
-
-    return f"{hour:02d}:00"
-
-
 def command_status():
 
+    # Status is an explicit user request, so scanning here is
+    # essentially free from an idle-resource perspective and
+    # guarantees an accurate count.
     scan_wallpapers()
 
     current = state.get(
@@ -1497,92 +1318,92 @@ def command_status():
         "next_change"
     )
 
-    lines = [
-        "Controller: running",
-        f"PID:        {os.getpid()}",
-        "",
-        f"Mode:       {mode}",
-    ]
+    lines = []
 
     # --------------------------------------------------------
-    # Mode-specific state
+    # Controller
     # --------------------------------------------------------
 
-    if mode == "family-time":
+    lines.append(
+        "Controller: running"
+    )
 
-        family = state.get(
-            "family"
-        )
+    lines.append(
+        f"PID:        {os.getpid()}"
+    )
 
-        lines.append(
-            f"Family:     {family or '-'}"
-        )
-
-    elif mode in {
-        "periodic",
-        "rotate-time",
-    }:
-
-        lines.append(
-            f"Interval:   {interval} min"
-            if interval
-            else "Interval:   -"
-        )
-
-        if mode == "rotate-time":
-
-            lines.append(
-                f"Family:     {state.get('family') or '-'}"
-            )
-
-    # --------------------------------------------------------
-    # Wallpaper state
-    # --------------------------------------------------------
-
-    lines.extend(
-        [
-            "",
-            f"Wallpapers: {len(wallpapers)}",
-            f"Current:    {Path(current).name if current else '-'}",
-            f"Previous:   {Path(previous).name if previous else '-'}",
-        ]
+    lines.append(
+        ""
     )
 
     # --------------------------------------------------------
-    # Family-time schedule
+    # Mode
     # --------------------------------------------------------
 
-    if mode == "family-time":
+    lines.append(
+        f"Mode:       {mode}"
+    )
 
-        family = state.get(
-            "family"
+    if interval:
+
+        lines.append(
+            f"Interval:   {interval} min"
         )
 
-        if family:
+    else:
 
-            schedule = family_time_schedule(
-                family
-            )
+        lines.append(
+            "Interval:   -"
+        )
 
-            lines.extend(
-                [
-                    "",
-                    "Schedule:",
-                ]
-            )
+    # --------------------------------------------------------
+    # Wallpaper count
+    # --------------------------------------------------------
 
-            for name, hour, path in schedule:
+    lines.append(
+        ""
+    )
 
-                lines.append(
-                    f"  {format_schedule_time(hour)}  {path.name}"
-                )
+    lines.append(
+        f"Wallpapers: {len(wallpapers)}"
+    )
+
+    # --------------------------------------------------------
+    # Last wallpaper selected by wpp
+    # --------------------------------------------------------
+
+    if current:
+
+        lines.append(
+            f"Last wpp:   {Path(current).name}"
+        )
+
+    else:
+
+        lines.append(
+            "Last wpp:   -"
+        )
+
+    # --------------------------------------------------------
+    # Previous wallpaper selected by wpp
+    # --------------------------------------------------------
+
+    if previous:
+
+        lines.append(
+            f"Previous:   {Path(previous).name}"
+        )
+
+    else:
+
+        lines.append(
+            "Previous:   -"
+        )
 
     # --------------------------------------------------------
     # Actual wallpaper reported by awww
     # --------------------------------------------------------
 
-    # awww is queried only for an explicit status request; it
-    # does not run in the background.
     awww_data = query_awww()
 
     awww_paths = []
@@ -1595,20 +1416,20 @@ def command_status():
         and "error" not in awww_data
     ):
 
-        awww_paths = extract_awww_paths(
-            awww_data
+        awww_paths = (
+            extract_awww_paths(
+                awww_data
+            )
         )
-
-    lines.extend(
-        [
-            "",
-        ]
-    )
 
     if len(awww_paths) == 1:
 
+        awww_current = Path(
+            awww_paths[0]
+        )
+
         lines.append(
-            f"awww:       {Path(awww_paths[0]).name}"
+            f"awww:       {awww_current.name}"
         )
 
     elif len(awww_paths) > 1:
@@ -1639,20 +1460,26 @@ def command_status():
     # Current symlink
     # --------------------------------------------------------
 
-    lines.extend(
-        [
-            "",
-            "Current link:",
-            f"  {CURRENT_LINK}",
-        ]
+    lines.append(
+        ""
+    )
+
+    lines.append(
+        "Current link:"
+    )
+
+    lines.append(
+        f"  {CURRENT_LINK}"
     )
 
     if CURRENT_LINK.is_symlink():
 
         try:
 
+            target = CURRENT_LINK.resolve()
+
             lines.append(
-                f"  -> {CURRENT_LINK.resolve()}"
+                f"  -> {target}"
             )
 
         except OSError:
@@ -1674,122 +1501,71 @@ def command_status():
         )
 
     # --------------------------------------------------------
-    # Last change
+    # Next automatic change
     # --------------------------------------------------------
 
-    last_changed = state.get(
-        "last_changed"
-    )
+    if next_change:
 
-    last_reason = state.get(
-        "last_reason"
-    )
-
-    if last_changed:
-
-        local_changed = datetime.fromtimestamp(
-            last_changed
+        remaining = max(
+            0,
+            int(
+                next_change
+                - time.time()
+            ),
         )
 
-        reason = (
-            last_reason
-            or "unknown"
-        )
+        minutes = remaining // 60
+        seconds = remaining % 60
 
-        lines.extend(
-            [
-                "",
-                "Last change:",
-                f"  {local_changed:%Y-%m-%d %H:%M:%S}  ({reason})",
-            ]
-        )
+        if minutes:
 
-    else:
-
-        lines.extend(
-            [
-                "",
-                "Last change: -",
-            ]
-        )
-
-    # --------------------------------------------------------
-    # Next actual wallpaper change
-    # --------------------------------------------------------
-
-    if mode == "family-time":
-
-        next_ts, next_name, next_path = next_family_change(
-            state.get("family"),
-            current,
-        )
-
-        if next_ts is not None:
-
-            local_next = datetime.fromtimestamp(
-                next_ts
-            )
-
-            lines.extend(
-                [
-                    "",
-                    "Next change:",
-                    f"  {local_next:%H:%M}  {next_path.name}",
-                    f"  in {format_duration(next_ts - time.time())}",
-                ]
+            lines.append(
+                f"Next change: {minutes}m {seconds}s"
             )
 
         else:
 
-            lines.extend(
-                [
-                    "",
-                    "Next change: none",
-                ]
+            lines.append(
+                f"Next change: {seconds}s"
             )
-
-    elif mode in {
-        "periodic",
-        "rotate-time",
-    } and next_change:
-
-        lines.extend(
-            [
-                "",
-                "Next change:",
-                f"  at {datetime.fromtimestamp(next_change):%H:%M}",
-                f"  in {format_duration(next_change - time.time())}",
-            ]
-        )
 
     else:
 
-        lines.extend(
-            [
-                "",
-                "Next change: disabled",
-            ]
+        lines.append(
+            "Next change: -"
         )
 
     # --------------------------------------------------------
     # Detect external awww changes
     # --------------------------------------------------------
 
-    if current and len(awww_paths) == 1:
+    if (
+        current
+        and len(awww_paths) == 1
+    ):
 
         try:
 
-            wpp_path = Path(current).resolve()
-            awww_path = Path(awww_paths[0]).resolve()
+            wpp_path = (
+                Path(current)
+                .resolve()
+            )
+
+            awww_path = (
+                Path(awww_paths[0])
+                .resolve()
+            )
 
             if wpp_path != awww_path:
 
-                lines.extend(
-                    [
-                        "",
-                        "Notice: awww is displaying a different "
-                        "wallpaper than the last one selected by wpp.",
-                    ]
+                lines.append(
+                    ""
+                )
+
+                lines.append(
+                    "Notice: awww is displaying a "
+                    "different wallpaper than the "
+                    "last one selected by wpp."
                 )
 
         except OSError:
@@ -2311,49 +2087,18 @@ def initialize_wallpaper():
 
     # Restore the controller's last selected wallpaper.
     #
-    # In family-time, however, the restored family must first
-    # be reconciled with the current time slot.
+    # This means restarting the controller does not randomly
+    # jump to another wallpaper.
     if (
         state.get("current")
         and str(selected)
         == state.get("current")
     ):
 
-        family, _ = split_family(
+        # Keep the symlink correct.
+        update_current_link(
             selected
         )
-
-        state["family"] = family
-
-        if state.get("mode") == "family-time":
-
-            time_selected = choose_time_variant(
-                family
-            )
-
-            if (
-                time_selected
-                and str(time_selected.resolve())
-                != str(selected.resolve())
-            ):
-
-                apply_wallpaper(
-                    time_selected,
-                    "family-time",
-                )
-            else:
-                update_current_link(
-                    selected
-                )
-
-            set_family_next_change()
-            save_state()
-
-        else:
-
-            update_current_link(
-                selected
-            )
 
         return
 
@@ -2361,38 +2106,6 @@ def initialize_wallpaper():
         selected,
         "startup",
     )
-
-    if state.get("mode") == "family-time":
-
-        family, _ = split_family(
-            Path(
-                state.get("current")
-            )
-        )
-
-        state["family"] = family
-
-        time_selected = choose_time_variant(
-            family
-        )
-
-        if (
-            time_selected
-            and str(time_selected.resolve())
-            != str(
-                Path(
-                    state.get("current")
-                ).resolve()
-            )
-        ):
-
-            apply_wallpaper(
-                time_selected,
-                "family-time",
-            )
-
-        set_family_next_change()
-        save_state()
 
 
 # ============================================================
@@ -2433,8 +2146,6 @@ def cleanup():
 def main():
 
     global server
-    global restart_requested
-    global running
 
     STATE_DIR.mkdir(
         parents=True,
@@ -2523,20 +2234,7 @@ def main():
 
             if mode == "family-time":
 
-                next_change = state.get(
-                    "next_change"
-                )
-
-                if next_change is not None:
-
-                    timeout = max(
-                        0,
-                        next_change - time.time(),
-                    )
-
-                else:
-
-                    timeout = None
+                timeout = 60
 
             elif mode in {
                 "periodic",
@@ -2583,15 +2281,6 @@ def main():
                     key.fileobj,
                     mask,
                 )
-
-            if restart_requested:
-
-                restart_controller()
-
-                # execv() should never return on success.
-                # If it does, stop rather than allowing two
-                # controller lifecycles to overlap.
-                running = False
 
             if running:
 
