@@ -879,21 +879,9 @@ def choose_time_variant_for_slot(
     )
 
     if not members:
+
         return None
 
-    # First preference: a variant whose name actually describes
-    # the requested time slot (or one of its supported aliases).
-    #
-    # This preserves normal time-aware families such as:
-    #   beach-dawn.jpg
-    #   beach-day.jpg
-    #   beach-dusk.jpg
-    #   beach-night.jpg
-    #
-    # The important distinction is that a family containing no
-    # time-labelled variants must NOT fall through to an
-    # alphabetical tie-break, because that would select the same
-    # file for every slot.
     best = None
     best_score = 1000
     best_name = None
@@ -904,9 +892,6 @@ def choose_time_variant_for_slot(
             variant,
             desired,
         )
-
-        if score >= 1000:
-            continue
 
         name = path.name.lower()
 
@@ -924,39 +909,7 @@ def choose_time_variant_for_slot(
             best_score = score
             best_name = name
 
-    if best is not None:
-        return best
-
-    # No time-labelled variants exist in this family.
-    #
-    # In that case, spread the family's wallpapers across the
-    # seven daily time slots in a deterministic round-robin.
-    # This means a family such as:
-    #
-    #   air-blue.jpg
-    #   air-cyan.jpg
-    #   air-golden.jpg
-    #   air-purple.jpg
-    #
-    # actually uses all four wallpapers instead of selecting
-    # air-blue.jpg for every slot.
-    ordered = sorted(
-        members,
-        key=lambda item: item[0].name.lower(),
-    )
-
-    slot_index = next(
-        (
-            index
-            for index, (name, _) in enumerate(TIME_POINTS)
-            if name == desired
-        ),
-        0,
-    )
-
-    return ordered[
-        slot_index % len(ordered)
-    ][0]
+    return best
 
 
 def choose_time_variant(
