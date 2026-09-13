@@ -232,7 +232,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry) {
     let search_icon =
         Image::from_icon_name("system-search-symbolic");
 
-    search_icon.set_pixel_size(22);
+    search_icon.set_pixel_size(20);
 
     search_icon.add_css_class("search-icon");
 
@@ -512,7 +512,8 @@ window.spotlight-window.background {
  * ========================================================================= */
 
 .search-icon {
-    opacity: 0.60;
+    color: rgba(55, 59, 67, 0.78);
+    opacity: 1;
 }
 
 
@@ -579,9 +580,9 @@ window.spotlight-window.background {
 
     border-radius: 29px;
 
-    background-color: rgba(247, 249, 252, 0.72);
+    background-color: rgba(247, 249, 250, 0.46);
 
-    border: 1px solid rgba(255, 255, 255, 0.70);
+    border: 1px solid rgba(255, 255, 255, 0.52);
 
     box-shadow:
         0 7px 20px rgba(0, 0, 0, 0.08);
@@ -601,7 +602,8 @@ window.spotlight-window.background {
  * ========================================================================= */
 
 .action-icon {
-    opacity: 0.68;
+	color: rgba(55, 59, 67, 0.78);
+    opacity: 1;
 }
 
 
@@ -610,7 +612,7 @@ window.spotlight-window.background {
  * ========================================================================= */
 
 .action-letter {
-    color: rgba(45, 51, 60, 0.72);
+    color: rgba(55, 59, 67, 0.78);
 
     font-size: 21px;
     font-weight: 600;
