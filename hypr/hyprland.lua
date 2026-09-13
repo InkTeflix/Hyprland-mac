@@ -88,7 +88,7 @@ hl.config({
         gaps_in  = 5,
         gaps_out = 10,
 
-        border_size = 2,
+        border_size = 0,
 
         col = {
             active_border   = { colors = {"rgba(33ccffee)", "rgba(00ff99ee)"}, angle = 45 },
@@ -366,6 +366,7 @@ hl.window_rule({
 -- Custom keybinds
 hl.bind(mainMod .. " + f", hl.dsp.window.fullscreen("maximized", "toggle")) 
 hl.bind(mainMod .. " + super_l", hl.dsp.exec_cmd("pkill rofi || rofi -show drun -theme ~/.config/hypr-mac/launchpad/launcher.rasi"))
+hl.bind(mainMod .. " + l", hl.dsp.exec_cmd("hyprlock -c ~/.config/hypr-mac/hypr/hyprlock.conf"))
 hl.bind(mainMod .. " + escape", hl.dsp.exec_cmd("pkill wlogout || ~/.config/hypr-mac/wlogout/launch.sh &"))
 hl.bind(mainMod .. " + w", hl.dsp.exec_cmd("waypaper"))
 hl.bind(mainMod .. " + print", hl.dsp.exec_cmd('grim -g "$(slurp)" - | wl-copy && notify-send -a "Screenshot" -i "image-x-generic" "Captured" "Saved to clipboard."'))
@@ -373,7 +374,7 @@ hl.bind("print", hl.dsp.exec_cmd('grim -g "$(slurp)" /tmp/ss.png && swappy -f /t
 hl.bind("SHIFT + print", hl.dsp.exec_cmd('grim /tmp/ss.png && wl-copy < /tmp/ss.png && notify-send -a "Screenshot" -i /tmp/ss.png "Captured" "Saved to clipboard."'))
 
 hl.on("hyprland.start",function()
-    hl.exec_cmd("while true; do waybar -c ~/.config/hypr-mac/waybar/config.jsonc -s ~/.config/hypr-mac/waybar/style.css; sleep 0.5; done")
+    hl.exec_cmd("waybar -c ~/.config/hypr-mac/waybar/config.jsonc -s ~/.config/hypr-mac/waybar/style.css")
     hl.exec_cmd("awww-daemon &")
     hl.exec_cmd("~/.config/hypr-mac/wallpaper start &")
     hl.exec_cmd("pkill mako; mako -c ~/.config/hypr-mac/mako/config &")
@@ -389,4 +390,13 @@ hl.window_rule({
     size        = "950 650",         -- Perfect size for a centered 3-column preview grid
     center      = true,              -- Keeps it locked directly in the middle of your screen
     pin         = false,              -- Keeps it visible if you switch workspaces mid-selection
+})
+
+hl.layer_rule({
+    match = {
+        namespace = "spotlight",
+    },
+    blur = true,
+    blur_popups = true,
+    no_anim = true,
 })

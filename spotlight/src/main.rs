@@ -3,16 +3,37 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use gtk::{
-    Align, Application, ApplicationWindow, Box as GtkBox, Button, Entry, Image,
-    Orientation,
+    Align, Application, ApplicationWindow, Box as GtkBox, Button, CenterBox, Entry, Image,
+    Label, Orientation,
 };
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-const APP_ID: &str = "com.ufoton.Spotlight";
+// -----------------------------------------------------------------------------
+// PROJECT IDENTITY
+// -----------------------------------------------------------------------------
+//
+// Deliberately generic.
+// Do not put usernames, machine names, hostnames, monitor names,
+// filesystem paths, or other personal/device-specific information here.
+//
+const APP_ID: &str = "org.spotlight.Launcher";
 const LAYER_NAMESPACE: &str = "spotlight";
+
+// -----------------------------------------------------------------------------
+// APPLICATION STATE
+// -----------------------------------------------------------------------------
+
+struct AppState {
+    window: ApplicationWindow,
+    entry: Entry,
+}
+
+// -----------------------------------------------------------------------------
+// MAIN
+// -----------------------------------------------------------------------------
 
 fn main() -> glib::ExitCode {
     let app = Application::builder()
@@ -20,65 +41,74 @@ fn main() -> glib::ExitCode {
         .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
 
-    // The window is created once and reused for the lifetime of the process.
-    // This is important for instant invocation from Hyprland.
-    let window: Rc<RefCell<Option<ApplicationWindow>>> =
+    let state: Rc<RefCell<Option<AppState>>> =
         Rc::new(RefCell::new(None));
 
+    // -------------------------------------------------------------------------
+    // STARTUP
+    // -------------------------------------------------------------------------
+    //
+    // Create the layer-shell window once and keep it alive.
+    // This gives us the persistent-process architecture we want.
+    //
     {
-        let window = Rc::clone(&window);
+        let state = Rc::clone(&state);
 
-        app.connect_activate(move |app| {
-            let win = build_window(app);
+        app.connect_startup(move |app| {
+            let (window, entry) = build_window(app);
 
-            // Keep the layer surface alive, but do not show it yet.
-            win.hide();
+            window.hide();
 
-            *window.borrow_mut() = Some(win);
+            *state.borrow_mut() = Some(AppState {
+                window,
+                entry,
+            });
         });
     }
 
+    // -------------------------------------------------------------------------
+    // COMMAND LINE
+    // -------------------------------------------------------------------------
+    //
+    // Hyprland can invoke:
+    //
+    //     spotlight toggle
+    //     spotlight show
+    //     spotlight hide
+    //
+    // Because GtkApplication uses a unique application ID, subsequent
+    // invocations are forwarded to the already-running process.
+    //
     {
-        let window = Rc::clone(&window);
+        let state = Rc::clone(&state);
 
-        app.connect_command_line(move |app, command_line| {
-            // Make sure the primary instance has created its window.
-            if window.borrow().is_none() {
-                app.activate();
-            }
-
+        app.connect_command_line(move |_app, command_line| {
             let args = command_line.arguments();
 
-            // argv[0] is the executable name.
             let command = args
                 .get(1)
                 .and_then(|arg| arg.to_str())
                 .unwrap_or("");
 
+            let binding = state.borrow();
+            let Some(state) = binding.as_ref() else {
+                return 0.into();
+            };
+
             match command {
-                "toggle" => {
-                    if let Some(win) = window.borrow().as_ref() {
-                        toggle_window(win);
-                    }
-                }
+                "toggle" => toggle_window(state),
 
-                "show" => {
-                    if let Some(win) = window.borrow().as_ref() {
-                        show_window(win);
-                    }
-                }
+                "show" => show_window(state),
 
-                "hide" => {
-                    if let Some(win) = window.borrow().as_ref() {
-                        hide_window(win);
-                    }
-                }
+                "hide" => hide_window(&state.window),
 
                 _ => {
-                    // No command:
+                    // No command means:
                     //
-                    // This starts the persistent process and leaves
-                    // Spotlight hidden.
+                    //     start persistent process
+                    //     keep Spotlight hidden
+                    //
+                    // This is useful for startup/autostart.
                 }
             }
 
@@ -93,7 +123,7 @@ fn main() -> glib::ExitCode {
 // WINDOW
 // -----------------------------------------------------------------------------
 
-fn build_window(app: &Application) -> ApplicationWindow {
+fn build_window(app: &Application) -> (ApplicationWindow, Entry) {
     let window = ApplicationWindow::builder()
         .application(app)
         .title("Spotlight")
@@ -102,41 +132,65 @@ fn build_window(app: &Application) -> ApplicationWindow {
         .build();
 
     // -------------------------------------------------------------------------
-    // WAYLAND LAYER-SHELL
+    // CSS CLASS ON TOPLEVEL
     // -------------------------------------------------------------------------
 
-    // Must happen before the window is realized.
+    window.add_css_class("spotlight-window");
+
+    // -------------------------------------------------------------------------
+    // WAYLAND LAYER SHELL
+    // -------------------------------------------------------------------------
+
+    //
+    // IMPORTANT:
+    //
+    // We deliberately do NOT:
+    //
+    //     - hard-code a monitor
+    //     - hard-code a resolution
+    //     - use 1366x768
+    //     - use screen coordinates
+    //
+    // The layer is stretched to the output selected by the compositor.
+    // Its size is derived at runtime below; no monitor name or resolution is
+    // stored in the project.
+    //
+
     window.init_layer_shell();
 
-    // Determine the runtime output and size.
-    configure_layer_surface(&window);
-
-    // Put Spotlight above normal application windows.
     window.set_layer(Layer::Overlay);
 
-    // Stable namespace for Hyprland layer rules.
     window.set_namespace(Some(LAYER_NAMESPACE));
 
-    // Spotlight needs keyboard input while visible.
     window.set_keyboard_mode(KeyboardMode::Exclusive);
 
-    // Stretch the layer across the selected output.
+    // Full-output transparent layer.
     window.set_anchor(Edge::Top, true);
     window.set_anchor(Edge::Bottom, true);
     window.set_anchor(Edge::Left, true);
     window.set_anchor(Edge::Right, true);
 
-    // This is an overlay, not a panel.
-    // Never reserve screen space.
+    // Spotlight does not reserve any desktop space.
     window.set_exclusive_zone(0);
+
+    // Layer-shell will otherwise size the surface to the natural size of the
+    // child hierarchy. Because we want the compositor to center the Spotlight
+    // cluster inside the full output, derive the surface size from runtime
+    // monitor geometry rather than hard-coding a resolution.
+    if let Some(display) = gdk::Display::default() {
+        if let Some(item) = display.monitors().item(0) {
+            if let Ok(monitor) = item.downcast::<gdk::Monitor>() {
+                let geometry = monitor.geometry();
+                window.set_default_size(geometry.width(), geometry.height());
+            }
+        }
+    }
 
     // -------------------------------------------------------------------------
     // ROOT
     // -------------------------------------------------------------------------
 
-    // The root fills the layer surface.
-    // CenterBox places the Spotlight composition in the middle.
-    let root = gtk::CenterBox::new();
+    let root = CenterBox::new();
 
     root.set_hexpand(true);
     root.set_vexpand(true);
@@ -147,7 +201,7 @@ fn build_window(app: &Application) -> ApplicationWindow {
     // CENTERED CLUSTER
     // -------------------------------------------------------------------------
 
-    let cluster = GtkBox::new(Orientation::Horizontal, 14);
+    let cluster = GtkBox::new(Orientation::Horizontal, 12);
 
     cluster.set_halign(Align::Center);
     cluster.set_valign(Align::Center);
@@ -161,34 +215,45 @@ fn build_window(app: &Application) -> ApplicationWindow {
     // SEARCH PILL
     // -------------------------------------------------------------------------
 
-    let search_pill = GtkBox::new(Orientation::Horizontal, 12);
+    let search_pill = GtkBox::new(Orientation::Horizontal, 10);
 
     search_pill.set_halign(Align::Center);
     search_pill.set_valign(Align::Center);
 
+    search_pill.set_width_request(380);
     search_pill.set_height_request(58);
-    search_pill.set_width_request(400);
 
     search_pill.add_css_class("search-pill");
 
-    // Search icon.
-    let search_icon = Image::from_icon_name("system-search-symbolic");
+    // -------------------------------------------------------------------------
+    // SEARCH ICON
+    // -------------------------------------------------------------------------
 
-    search_icon.set_pixel_size(23);
+    let search_icon =
+        Image::from_icon_name("system-search-symbolic");
+
+    search_icon.set_pixel_size(22);
+
     search_icon.add_css_class("search-icon");
 
     search_pill.append(&search_icon);
 
-    // Actual editable search field.
+    // -------------------------------------------------------------------------
+    // SEARCH ENTRY
+    // -------------------------------------------------------------------------
+
     let entry = Entry::new();
 
     entry.set_placeholder_text(Some("Spotlight Search"));
 
     entry.set_hexpand(true);
+
     entry.set_halign(Align::Fill);
     entry.set_valign(Align::Center);
 
     entry.set_has_frame(false);
+
+    entry.set_focusable(true);
 
     entry.add_css_class("search-entry");
 
@@ -200,29 +265,17 @@ fn build_window(app: &Application) -> ApplicationWindow {
     // FOUR TAHOE CONTROLS
     // -------------------------------------------------------------------------
 
-    let applications = make_action_button(
-        "applications-button",
-        "system-software-install-symbolic",
-        "Applications",
-    );
+    let applications =
+        make_letter_button("applications-button", "A", "Applications");
 
-    let files = make_action_button(
-        "files-button",
-        "folder-symbolic",
-        "Files",
-    );
+    let files =
+        make_icon_button("files-button", "folder-symbolic", "Files");
 
-    let actions = make_action_button(
-        "actions-button",
-        "system-run-symbolic",
-        "Actions",
-    );
+    let actions =
+        make_icon_button("actions-button", "view-grid-symbolic", "Actions");
 
-    let clipboard = make_action_button(
-        "clipboard-button",
-        "edit-paste-symbolic",
-        "Clipboard",
-    );
+    let clipboard =
+        make_icon_button("clipboard-button", "edit-copy-symbolic", "Clipboard");
 
     cluster.append(&applications);
     cluster.append(&files);
@@ -230,7 +283,7 @@ fn build_window(app: &Application) -> ApplicationWindow {
     cluster.append(&clipboard);
 
     // -------------------------------------------------------------------------
-    // CENTER THE CLUSTER
+    // CENTER EVERYTHING
     // -------------------------------------------------------------------------
 
     root.set_center_widget(Some(&cluster));
@@ -267,59 +320,44 @@ fn build_window(app: &Application) -> ApplicationWindow {
 
     install_css();
 
-    window
-}
-
-// -----------------------------------------------------------------------------
-// LAYER-SHELL GEOMETRY
-// -----------------------------------------------------------------------------
-
-fn configure_layer_surface(window: &ApplicationWindow) {
-    let Some(display) = gdk::Display::default() else {
-        eprintln!("Spotlight: could not get default GDK display");
-        return;
-    };
-
-    let monitors = display.monitors();
-
-    let Some(object) = monitors.item(0) else {
-        eprintln!("Spotlight: no monitor was found");
-        return;
-    };
-
-    let Ok(monitor) = object.downcast::<gdk::Monitor>() else {
-        eprintln!("Spotlight: GDK object was not a monitor");
-        return;
-    };
-
-    let geometry = monitor.geometry();
-
-    // Associate the layer-shell surface with this runtime-detected output.
-    window.set_monitor(Some(&monitor));
-
-    // IMPORTANT:
-    //
-    // This is runtime geometry. Nothing about the user's actual resolution
-    // is stored in the project.
-    //
-    // The values are supplied by the current graphical session.
-    window.set_default_size(
-        geometry.width(),
-        geometry.height(),
-    );
-
-    eprintln!(
-        "Spotlight target output geometry: {} x {}",
-        geometry.width(),
-        geometry.height()
-    );
+    (window, entry)
 }
 
 // -----------------------------------------------------------------------------
 // BUTTONS
 // -----------------------------------------------------------------------------
 
-fn make_action_button(
+fn make_letter_button(
+    class_name: &str,
+    letter: &str,
+    tooltip: &str,
+) -> Button {
+    let button = Button::new();
+
+    button.set_width_request(58);
+    button.set_height_request(58);
+
+    button.set_halign(Align::Center);
+    button.set_valign(Align::Center);
+
+    button.set_focusable(false);
+    button.set_focus_on_click(false);
+
+    button.set_tooltip_text(Some(tooltip));
+
+    button.add_css_class("action-button");
+    button.add_css_class(class_name);
+
+    let label = Label::new(Some(letter));
+
+    label.add_css_class("action-letter");
+
+    button.set_child(Some(&label));
+
+    button
+}
+
+fn make_icon_button(
     class_name: &str,
     icon_name: &str,
     tooltip: &str,
@@ -333,6 +371,7 @@ fn make_action_button(
     button.set_valign(Align::Center);
 
     button.set_focusable(false);
+    button.set_focus_on_click(false);
 
     button.set_tooltip_text(Some(tooltip));
 
@@ -343,6 +382,8 @@ fn make_action_button(
 
     icon.set_pixel_size(22);
 
+    icon.add_css_class("action-icon");
+
     button.set_child(Some(&icon));
 
     button
@@ -352,47 +393,18 @@ fn make_action_button(
 // WINDOW STATE
 // -----------------------------------------------------------------------------
 
-fn show_window(window: &ApplicationWindow) {
-    window.present();
+fn show_window(state: &AppState) {
+    state.window.present();
 
-    // Wait until GTK has performed a layout/allocation pass.
+    let entry = state.entry.clone();
+
     //
-    // This diagnostic is intentionally temporary. It lets us verify whether
-    // the layer surface is now receiving the full runtime output geometry.
-    let window = window.clone();
-
+    // Wait until GTK has mapped/allocated the surface.
+    // Then place keyboard focus directly into the search field.
+    //
     glib::idle_add_local_once(move || {
-        eprintln!(
-            "Spotlight allocated size: {} x {}",
-            window.width(),
-            window.height()
-        );
-
-        if let Some(root) = window.child() {
-            eprintln!(
-                "Root allocated size: {} x {}",
-                root.width(),
-                root.height()
-            );
-
-            if let Some(cluster) = root.first_child() {
-                eprintln!(
-                    "Cluster allocated size: {} x {}",
-                    cluster.width(),
-                    cluster.height()
-                );
-
-                if let Some(search_pill) = cluster.first_child() {
-                    if let Some(entry) = search_pill
-                        .last_child()
-                        .and_downcast::<Entry>()
-                    {
-                        entry.grab_focus();
-                        entry.select_region(0, -1);
-                    }
-                }
-            }
-        }
+        entry.grab_focus();
+        entry.select_region(0, -1);
     });
 }
 
@@ -400,11 +412,11 @@ fn hide_window(window: &ApplicationWindow) {
     window.hide();
 }
 
-fn toggle_window(window: &ApplicationWindow) {
-    if window.is_visible() {
-        hide_window(window);
+fn toggle_window(state: &AppState) {
+    if state.window.is_visible() {
+        hide_window(&state.window);
     } else {
-        show_window(window);
+        show_window(state);
     }
 }
 
@@ -417,146 +429,214 @@ fn install_css() {
 
     provider.load_from_data(
         r#"
-        /*
-         * ROOT
-         *
-         * The entire layer surface is transparent.
-         * Hyprland is responsible for environmental blur.
-         */
 
-         window {
-         	background-color: transparent;
-         }
+/* ============================================================================
+ * TOPLEVEL / TRANSPARENCY
+ * ============================================================================
+ *
+ * GTK4 supports transparent backgrounds through CSS.
+ *
+ * The application itself does NOT blur the desktop.
+ * Hyprland is responsible for compositor blur.
+ */
 
-        .spotlight-root {
-            background-color: transparent;
-        }
-
-
-        /*
-         * CENTERED COMPOSITION
-         */
-
-        .spotlight-cluster {
-            background-color: transparent;
-        }
+window,
+window.background,
+window.spotlight-window,
+window.spotlight-window.background {
+    background: transparent;
+    background-color: rgba(0, 0, 0, 0);
+    background-image: none;
+    box-shadow: none;
+}
 
 
-        /*
-         * SEARCH PILL
-         */
+/* ============================================================================
+ * ROOT
+ * ========================================================================== */
 
-        .search-pill {
-            min-width: 400px;
-            min-height: 58px;
-
-            padding-left: 18px;
-            padding-right: 20px;
-
-            border-radius: 29px;
-
-            background-color: rgba(248, 250, 252, 0.82);
-
-            border: 1px solid rgba(255, 255, 255, 0.72);
-
-            box-shadow:
-                0 10px 30px rgba(0, 0, 0, 0.10);
-        }
+.spotlight-root {
+    background: transparent;
+    background-color: rgba(0, 0, 0, 0);
+}
 
 
-        /*
-         * SEARCH ICON
-         */
+/* ============================================================================
+ * CENTERED CLUSTER
+ * ============================================================================
+ *
+ * No fixed X/Y coordinates.
+ *
+ * GTK CenterBox + Center alignment keeps this centered regardless of
+ * output resolution.
+ */
 
-        .search-icon {
-            opacity: 0.72;
-        }
-
-
-        /*
-         * ENTRY
-         *
-         * GTK's Entry is used instead of a custom text widget.
-         * This gives us IME support, cursor behavior, selection,
-         * keyboard handling, accessibility, etc.
-         */
-
-        .search-entry {
-            min-height: 42px;
-
-            padding: 0;
-
-            border: none;
-            outline: none;
-
-            background: transparent;
-
-            color: rgba(25, 30, 38, 0.92);
-
-            font-size: 20px;
-            font-weight: 400;
-        }
-
-        .search-entry placeholder {
-            color: rgba(45, 52, 62, 0.68);
-        }
+.spotlight-cluster {
+    background: transparent;
+    background-color: rgba(0, 0, 0, 0);
+}
 
 
-        /*
-         * CIRCULAR CONTROLS
-         */
+/* ============================================================================
+ * SEARCH PILL
+ * ============================================================================
+ *
+ * Tahoe-inspired:
+ *
+ *     light glass
+ *     very soft border
+ *     large radius
+ *     restrained shadow
+ */
 
-        .action-button {
-            min-width: 58px;
-            min-height: 58px;
+.search-pill {
+    min-width: 380px;
+    min-height: 58px;
 
-            padding: 0;
+    padding-left: 17px;
+    padding-right: 18px;
 
-            border-radius: 29px;
+    border-radius: 29px;
 
-            background-color: rgba(248, 250, 252, 0.74);
+    background-color: rgba(247, 249, 252, 0.84);
 
-            border: 1px solid rgba(255, 255, 255, 0.68);
+    border: 1px solid rgba(255, 255, 255, 0.78);
 
-            box-shadow:
-                0 8px 24px rgba(0, 0, 0, 0.08);
-        }
-
-
-        .action-button:hover {
-            background-color: rgba(255, 255, 255, 0.88);
-        }
-
-
-        .action-button:active {
-            background-color: rgba(235, 238, 242, 0.90);
-        }
-
-
-        .action-button image {
-            opacity: 0.76;
-        }
+    box-shadow:
+        0 8px 24px rgba(0, 0, 0, 0.10);
+}
 
 
-        /*
-         * Remove GTK's default button focus decoration from the
-         * four browse controls.
-         */
+/* ============================================================================
+ * SEARCH ICON
+ * ========================================================================= */
 
-        .action-button:focus {
-            outline: none;
+.search-icon {
+    opacity: 0.60;
+}
 
-            box-shadow:
-                0 8px 24px rgba(0, 0, 0, 0.08);
-        }
-        "#,
+
+/* ============================================================================
+ * SEARCH ENTRY
+ * ============================================================================
+ *
+ * Remove GTK's normal frame/focus treatment.
+ * The pill itself is the visual container.
+ */
+
+.search-entry {
+    min-height: 40px;
+
+    padding: 0;
+
+    border: none;
+
+    outline: none;
+
+    background: transparent;
+    background-color: transparent;
+
+    color: rgba(35, 40, 48, 0.94);
+
+    font-size: 20px;
+    font-weight: 400;
+}
+
+.search-entry:focus {
+    border: none;
+    outline: none;
+
+    background: transparent;
+    background-color: transparent;
+
+    box-shadow: none;
+}
+
+.search-entry:focus-within {
+    border: none;
+    outline: none;
+
+    box-shadow: none;
+}
+
+.search-entry placeholder {
+    color: rgba(48, 54, 64, 0.62);
+}
+
+
+/* ============================================================================
+ * ACTION BUTTONS
+ * ============================================================================
+ *
+ * The four controls are intentionally secondary to the search field.
+ */
+
+.action-button {
+    min-width: 58px;
+    min-height: 58px;
+
+    padding: 0;
+
+    border-radius: 29px;
+
+    background-color: rgba(247, 249, 252, 0.72);
+
+    border: 1px solid rgba(255, 255, 255, 0.70);
+
+    box-shadow:
+        0 7px 20px rgba(0, 0, 0, 0.08);
+}
+
+.action-button:hover {
+    background-color: rgba(252, 253, 255, 0.82);
+}
+
+.action-button:active {
+    background-color: rgba(232, 235, 240, 0.88);
+}
+
+
+/* ============================================================================
+ * ACTION ICONS
+ * ========================================================================= */
+
+.action-icon {
+    opacity: 0.68;
+}
+
+
+/* ============================================================================
+ * APPLICATIONS "A"
+ * ========================================================================= */
+
+.action-letter {
+    color: rgba(45, 51, 60, 0.72);
+
+    font-size: 21px;
+    font-weight: 600;
+}
+
+
+/* ============================================================================
+ * REMOVE BUTTON FOCUS RING
+ * ========================================================================= */
+
+.action-button:focus,
+.action-button:focus-visible {
+    outline: none;
+
+    box-shadow:
+        0 7px 20px rgba(0, 0, 0, 0.08);
+}
+
+"#,
     );
 
     if let Some(display) = gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
             &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            gtk::STYLE_PROVIDER_PRIORITY_USER,
         );
     }
 }
