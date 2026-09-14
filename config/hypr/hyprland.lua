@@ -374,7 +374,7 @@ hl.bind("print", hl.dsp.exec_cmd('grim -g "$(slurp)" /tmp/ss.png && swappy -f /t
 hl.bind("SHIFT + print", hl.dsp.exec_cmd('grim /tmp/ss.png && wl-copy < /tmp/ss.png && notify-send -a "Screenshot" -i /tmp/ss.png "Captured" "Saved to clipboard."'))
 
 hl.on("hyprland.start",function()
-    hl.exec_cmd("waybar -c ~/.config/hypr-mac/waybar/config.jsonc -s ~/.config/hypr-mac/waybar/style.css")
+    hl.exec_cmd("while ture; do; waybar -c ~/.config/hypr-mac/waybar/config.jsonc -s ~/.config/hypr-mac/waybar/style.css; sleep 0.5; done")
     hl.exec_cmd("awww-daemon &")
     hl.exec_cmd("~/.config/hypr-mac/wallpaper start &")
     hl.exec_cmd("pkill mako; mako -c ~/.config/hypr-mac/mako/config &")
