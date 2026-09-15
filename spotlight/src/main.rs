@@ -171,7 +171,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry) {
     window.set_anchor(Edge::Right, true);
 
     // Spotlight does not reserve any desktop space.
-    window.set_exclusive_zone(0);
+    window.set_exclusive_zone(-1);
 
     // Layer-shell will otherwise size the surface to the natural size of the
     // child hierarchy. Because we want the compositor to center the Spotlight

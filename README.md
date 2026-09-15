@@ -32,7 +32,7 @@ The automated helper deployment script suite is completely fixed and operational
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/InkTeflix/Hyprland-mac.com
+   git clone https://github.com/InkTeflix/Hyprland-mac.git
    ```
 2. Navigate into the script toolkit directory:
    ```bash
