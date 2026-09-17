@@ -120,6 +120,82 @@ fn main() -> glib::ExitCode {
 }
 
 // -----------------------------------------------------------------------------
+// RESPONSIVE UI METRICS
+// -----------------------------------------------------------------------------
+
+#[derive(Clone, Copy)]
+struct UiMetrics {
+    search_width: i32,
+    control_size: i32,
+    gap: i32,
+    inner_gap: i32,
+    icon_size: i32,
+}
+
+fn responsive_metrics(output_width: i32) -> UiMetrics {
+    // The reference composition is the existing V0.1 layout:
+    //
+    // search pill: 380px
+    // four controls: 4 × 58px
+    // four inter-control gaps: 4 × 12px
+    //
+    // Total visual width: 660px.
+    //
+    // We use that only as a design reference. The actual UI scales down
+    // when the available output is narrower and the search pill grows
+    // moderately on very wide outputs.
+    const REFERENCE_COMPOSITION_WIDTH: f64 = 660.0;
+    const REFERENCE_SEARCH_WIDTH: f64 = 380.0;
+    const REFERENCE_CONTROL_SIZE: f64 = 58.0;
+    const REFERENCE_GAP: f64 = 12.0;
+    const REFERENCE_INNER_GAP: f64 = 10.0;
+    const REFERENCE_ICON_SIZE: f64 = 22.0;
+
+    let available_width = (output_width - 24).max(1) as f64;
+
+    // Never enlarge the four controls beyond their Tahoe reference size.
+    // When the display is narrower than the reference composition, scale
+    // the composition down as a whole.
+    let scale = (available_width / REFERENCE_COMPOSITION_WIDTH).min(1.0);
+
+    let control_size = (REFERENCE_CONTROL_SIZE * scale)
+        .round()
+        .clamp(18.0, REFERENCE_CONTROL_SIZE) as i32;
+
+    let gap = (REFERENCE_GAP * scale)
+        .round()
+        .clamp(4.0, REFERENCE_GAP) as i32;
+
+    let inner_gap = (REFERENCE_INNER_GAP * scale)
+        .round()
+        .clamp(4.0, REFERENCE_INNER_GAP) as i32;
+
+    let icon_size = (REFERENCE_ICON_SIZE * scale)
+        .round()
+        .clamp(12.0, REFERENCE_ICON_SIZE) as i32;
+
+    let search_width = if scale < 1.0 {
+        (REFERENCE_SEARCH_WIDTH * scale).round().max(1.0) as i32
+    } else {
+        // Preserve the current 380px reference at normal widths.
+        // On very wide outputs, let the search field grow, but keep a
+        // deliberate ceiling so the interface never becomes enormous.
+        let extra_width = ((output_width - 1366).max(0) as f64) * 0.25;
+        (REFERENCE_SEARCH_WIDTH + extra_width)
+            .min(900.0)
+            .round() as i32
+    };
+
+    UiMetrics {
+        search_width,
+        control_size,
+        gap,
+        inner_gap,
+        icon_size,
+    }
+}
+
+// -----------------------------------------------------------------------------
 // WINDOW
 // -----------------------------------------------------------------------------
 
@@ -198,10 +274,22 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry) {
     root.add_css_class("spotlight-root");
 
     // -------------------------------------------------------------------------
+    // RESPONSIVE UI METRICS
+    // -------------------------------------------------------------------------
+
+    let output_width = gdk::Display::default()
+        .and_then(|display| display.monitors().item(0))
+        .and_then(|item| item.downcast::<gdk::Monitor>().ok())
+        .map(|monitor| monitor.geometry().width())
+        .unwrap_or(640);
+
+    let metrics = responsive_metrics(output_width);
+
+    // -------------------------------------------------------------------------
     // CENTERED CLUSTER
     // -------------------------------------------------------------------------
 
-    let cluster = GtkBox::new(Orientation::Horizontal, 12);
+    let cluster = GtkBox::new(Orientation::Horizontal, metrics.gap);
 
     cluster.set_halign(Align::Center);
     cluster.set_valign(Align::Center);
@@ -215,13 +303,13 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry) {
     // SEARCH PILL
     // -------------------------------------------------------------------------
 
-    let search_pill = GtkBox::new(Orientation::Horizontal, 10);
+    let search_pill = GtkBox::new(Orientation::Horizontal, metrics.inner_gap);
 
     search_pill.set_halign(Align::Center);
     search_pill.set_valign(Align::Center);
 
-    search_pill.set_width_request(380);
-    search_pill.set_height_request(58);
+    search_pill.set_width_request(metrics.search_width);
+    search_pill.set_height_request(metrics.control_size);
 
     search_pill.add_css_class("search-pill");
 
@@ -232,7 +320,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry) {
     let search_icon =
         Image::from_icon_name("system-search-symbolic");
 
-    search_icon.set_pixel_size(20);
+    search_icon.set_pixel_size(metrics.icon_size);
 
     search_icon.add_css_class("search-icon");
 
@@ -244,7 +332,13 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry) {
 
     let entry = Entry::new();
 
-    entry.set_placeholder_text(Some("Spotlight Search"));
+    let placeholder = if metrics.search_width < 230 {
+        "Search"
+    } else {
+        "Spotlight Search"
+    };
+
+    entry.set_placeholder_text(Some(placeholder));
 
     entry.set_hexpand(true);
 
@@ -266,16 +360,16 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry) {
     // -------------------------------------------------------------------------
 
     let applications =
-        make_letter_button("applications-button", "A", "Applications");
+        make_letter_button("applications-button", "A", "Applications", metrics.control_size);
 
     let files =
-        make_icon_button("files-button", "folder-symbolic", "Files");
+        make_icon_button("files-button", "folder-symbolic", "Files", metrics.control_size, metrics.icon_size);
 
     let actions =
-        make_icon_button("actions-button", "view-grid-symbolic", "Actions");
+        make_icon_button("actions-button", "view-grid-symbolic", "Actions", metrics.control_size, metrics.icon_size);
 
     let clipboard =
-        make_icon_button("clipboard-button", "edit-copy-symbolic", "Clipboard");
+        make_icon_button("clipboard-button", "edit-copy-symbolic", "Clipboard", metrics.control_size, metrics.icon_size);
 
     cluster.append(&applications);
     cluster.append(&files);
@@ -331,11 +425,12 @@ fn make_letter_button(
     class_name: &str,
     letter: &str,
     tooltip: &str,
+    size: i32,
 ) -> Button {
     let button = Button::new();
 
-    button.set_width_request(58);
-    button.set_height_request(58);
+    button.set_width_request(size);
+    button.set_height_request(size);
 
     button.set_halign(Align::Center);
     button.set_valign(Align::Center);
@@ -361,11 +456,13 @@ fn make_icon_button(
     class_name: &str,
     icon_name: &str,
     tooltip: &str,
+    size: i32,
+    icon_size: i32,
 ) -> Button {
     let button = Button::new();
 
-    button.set_width_request(58);
-    button.set_height_request(58);
+    button.set_width_request(size);
+    button.set_height_request(size);
 
     button.set_halign(Align::Center);
     button.set_valign(Align::Center);
@@ -380,7 +477,7 @@ fn make_icon_button(
 
     let icon = Image::from_icon_name(icon_name);
 
-    icon.set_pixel_size(22);
+    icon.set_pixel_size(icon_size);
 
     icon.add_css_class("action-icon");
 
@@ -490,13 +587,13 @@ window.spotlight-window.background {
  */
 
 .search-pill {
-    min-width: 380px;
-    min-height: 58px;
+    min-width: 0;
+    min-height: 0;
 
     padding-left: 17px;
     padding-right: 18px;
 
-    border-radius: 29px;
+    border-radius: 999px;
 
     background-color: rgba(247, 249, 252, 0.84);
 
@@ -573,12 +670,12 @@ window.spotlight-window.background {
  */
 
 .action-button {
-    min-width: 58px;
-    min-height: 58px;
+    min-width: 0;
+    min-height: 0;
 
     padding: 0;
 
-    border-radius: 29px;
+    border-radius: 999px;
 
     background-color: rgba(247, 249, 250, 0.46);
 
@@ -640,5 +737,82 @@ window.spotlight-window.background {
             &provider,
             gtk::STYLE_PROVIDER_PRIORITY_USER,
         );
+    }
+}
+
+#[cfg(test)]
+mod responsive_tests {
+    use super::*;
+
+    fn total_width(m: UiMetrics) -> i32 {
+        m.search_width
+            + (m.control_size * 4)
+            + (m.gap * 4)
+    }
+
+    #[test]
+    fn realistic_resolutions_fit() {
+        let resolutions = [
+            640,
+            800,
+            1024,
+            1280,
+            1366,
+            1440,
+            1920,
+            2560,
+            3440,
+            3840,
+            5120,
+            7680,
+            13440,
+        ];
+
+        for width in resolutions {
+            let metrics = responsive_metrics(width);
+            let total = total_width(metrics);
+
+            println!(
+                "width={width}: search={} control={} gap={} inner_gap={} icon={} total={}",
+                metrics.search_width,
+                metrics.control_size,
+                metrics.gap,
+                metrics.inner_gap,
+                metrics.icon_size,
+                total
+            );
+
+            assert!(metrics.search_width > 0);
+            assert!(metrics.control_size > 0);
+            assert!(metrics.gap > 0);
+            assert!(metrics.inner_gap > 0);
+            assert!(metrics.icon_size > 0);
+
+            assert!(
+                total <= width,
+                "composition overflows width {width}px: total={total}px"
+            );
+        }
+    }
+
+    #[test]
+    fn very_wide_displays_do_not_grow_forever() {
+        let metrics = responsive_metrics(13440);
+
+        assert!(metrics.search_width <= 900);
+        assert!(metrics.control_size <= 58);
+        assert!(metrics.gap <= 12);
+        assert!(metrics.icon_size <= 22);
+    }
+
+    #[test]
+    fn reference_width_is_stable() {
+        let metrics = responsive_metrics(1366);
+
+        assert_eq!(metrics.control_size, 58);
+        assert_eq!(metrics.gap, 12);
+        assert_eq!(metrics.inner_gap, 10);
+        assert_eq!(metrics.icon_size, 22);
+        assert_eq!(metrics.search_width, 380);
     }
 }
