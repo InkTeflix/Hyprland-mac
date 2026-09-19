@@ -1,0 +1,26 @@
+[config]
+source_color_index = 0
+
+[templates.spotlight]
+input_path = '~/.config/hypr-mac/matugen/templates/spotlight.css'
+output_path = '~/.config/hypr-mac/matugen/generated/spotlight.css'
+
+[templates.colors_css]
+input_path = '~/.config/hypr-mac/matugen/templates/colors.css'
+output_path = '~/.config/hypr-mac/matugen/generated/colors.css'
+
+[templates.colors_json]
+input_path = '~/.config/hypr-mac/matugen/templates/colors.json'
+output_path = '~/.config/hypr-mac/matugen/generated/colors.json'
+
+[templates.colors_env]
+input_path = '~/.config/hypr-mac/matugen/templates/colors.env'
+output_path = '~/.config/hypr-mac/matugen/generated/colors.env'
+
+[templates.colors_toml]
+input_path = '~/.config/hypr-mac/matugen/templates/colors.toml'
+output_path = '~/.config/hypr-mac/matugen/generated/colors.toml'
+
+[templates.colors_lua]
+input_path = '~/.config/hypr-mac/matugen/templates/colors.lua'
+output_path = '~/.config/hypr-mac/matugen/generated/colors.lua'
