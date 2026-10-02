@@ -3,4 +3,5 @@ wallpaper-state/controller.sock
 wallpaper-state/current
 __pycache__/
 *.py[cod]
+transparency.png
 
