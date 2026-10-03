@@ -1594,8 +1594,8 @@ fn make_back_button(tooltip: &str) -> Button {
 
 fn make_inline_filter_button(class_name: &str, letter: &str, tooltip: &str) -> Button {
     let button = Button::new();
-    button.set_width_request(28);
-    button.set_height_request(28);
+    button.set_width_request(34);
+    button.set_height_request(34);
     button.set_halign(Align::Center);
     button.set_valign(Align::Center);
     button.set_focusable(false);
@@ -1613,8 +1613,8 @@ fn make_inline_filter_button(class_name: &str, letter: &str, tooltip: &str) -> B
 
 fn make_inline_filter_icon_button(class_name: &str, icon_name: &str, tooltip: &str) -> Button {
     let button = Button::new();
-    button.set_width_request(28);
-    button.set_height_request(28);
+    button.set_width_request(34);
+    button.set_height_request(34);
     button.set_halign(Align::Center);
     button.set_valign(Align::Center);
     button.set_focusable(false);
@@ -1624,7 +1624,7 @@ fn make_inline_filter_icon_button(class_name: &str, icon_name: &str, tooltip: &s
     button.add_css_class(class_name);
 
     let icon = Image::from_icon_name(icon_name);
-    icon.set_pixel_size(15);
+    icon.set_pixel_size(18);
     icon.add_css_class("inline-filter-icon");
     button.set_child(Some(&icon));
 
@@ -1944,11 +1944,11 @@ window.spotlight-window.background {
 }
 
 .inline-filter-button {
-    min-width: 28px;
-    min-height: 28px;
+    min-width: 34px;
+    min-height: 34px;
 
     padding: 0;
-    border-radius: 9px;
+    border-radius: 10px;
 
     background-color: rgba(255, 255, 255, 0.14);
     border: 1px solid rgba(255, 255, 255, 0.20);
@@ -1971,7 +1971,7 @@ window.spotlight-window.background {
 
 .inline-filter-letter {
     color: rgba(55, 59, 67, 0.76);
-    font-size: 13px;
+    font-size: 16px;
     font-weight: 600;
 }
 
