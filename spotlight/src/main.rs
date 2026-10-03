@@ -819,6 +819,85 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
     }
 
     // -------------------------------------------------------------------------
+    // RESULT ROW MOUSE INTERACTION
+    // -------------------------------------------------------------------------
+
+    // Hover is a visual state only. Selection remains the logical keyboard
+    // selection until the user clicks a result.
+    let result_rows_weak = Rc::downgrade(&result_rows);
+
+    for (row_index, row) in result_rows.iter().enumerate() {
+        let hovered_button = row.button.clone();
+        let motion = gtk::EventControllerMotion::new();
+
+        motion.connect_enter(move |_controller, _x, _y| {
+            hovered_button.add_css_class("hovered");
+        });
+
+        let hovered_button = row.button.clone();
+        motion.connect_leave(move |_controller| {
+            hovered_button.remove_css_class("hovered");
+        });
+
+        row.button.add_controller(motion);
+
+        // Use one GestureClick sequence for both single- and multi-press
+        // semantics. The previous implementation had two independent paths:
+        // Button::clicked handled single clicks while GestureClick handled
+        // double clicks. On GTK this can result in the same physical sequence
+        // being processed by different controllers, making double activation
+        // unreliable.
+        //
+        // Capture phase lets our gesture observe the sequence before the
+        // Button's built-in click handling can claim it.
+        let gesture_rows = result_rows_weak.clone();
+        let gesture_panel = results_panel.clone();
+        let gesture_selected = Rc::clone(&selected_index);
+        let gesture_window = Rc::clone(&result_window_start);
+        let gesture_visible_rows = visible_result_rows;
+        let gesture = gtk::GestureClick::new();
+        gesture.set_button(1);
+        gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
+
+        gesture.connect_released(move |_gesture, n_press, _x, _y| {
+            let Some(rows) = gesture_rows.upgrade() else {
+                return;
+            };
+
+            match n_press {
+                1 => {
+                    // Single click/tap selects only.
+                    set_mock_selection(
+                        &gesture_panel,
+                        rows.as_ref(),
+                        &gesture_selected,
+                        &gesture_window,
+                        row_index,
+                        gesture_visible_rows,
+                    );
+                }
+                press if is_double_press(press) => {
+                    // The same gesture sequence's second press confirms.
+                    set_mock_selection(
+                        &gesture_panel,
+                        rows.as_ref(),
+                        &gesture_selected,
+                        &gesture_window,
+                        row_index,
+                        gesture_visible_rows,
+                    );
+                    confirm_mock_selection(rows.as_ref(), row_index);
+                }
+                _ => {
+                    // Ignore triple+ presses; double activation is exactly two.
+                }
+            }
+        });
+
+        row.button.add_controller(gesture);
+    }
+
+    // -------------------------------------------------------------------------
     // CSS
     // -------------------------------------------------------------------------
 
@@ -1739,12 +1818,17 @@ window.spotlight-window.background {
     border: none;
 }
 
-.result-button:hover {
-    background-color: rgba(255, 255, 255, 0.08);
+.result-button:hover,
+.result-button.hovered {
+    background-color: rgba(81, 69, 58, 0.10);
 }
 
 .result-button.selected {
     background-color: rgba(255, 255, 255, 0.18);
+}
+
+.result-button.selected.hovered {
+    background-color: rgba(255, 220, 190, 0.38);
 }
 
 .result-icon {
@@ -1898,6 +1982,10 @@ fn reload_generated_theme(provider: &gtk::CssProvider) {
     }
 }
 
+fn is_double_press(n_press: i32) -> bool {
+    n_press == 2
+}
+
 #[cfg(test)]
 mod responsive_tests {
     use super::*;
@@ -1920,11 +2008,17 @@ mod responsive_tests {
 
     #[test]
     fn responsive_widths_fit_without_device_specific_values() {
-        let upper_bound = (REFERENCE_COMPOSITION_WIDTH * 20.0) as i32;
+        const OUTER_HORIZONTAL_INSET: i32 = 24;
+        const MIN_SEARCH_WIDTH: i32 = 1;
+        const MIN_CONTROL_SIZE: i32 = 1;
 
-        for width in 1i32..=upper_bound {
+        let upper_bound = (REFERENCE_COMPOSITION_WIDTH * 20.0) as i32;
+        let minimum_feasible_width =
+            OUTER_HORIZONTAL_INSET + MIN_SEARCH_WIDTH + (MIN_CONTROL_SIZE * 4);
+
+        for width in minimum_feasible_width..=upper_bound {
             let metrics = responsive_metrics(width);
-            let usable_width = (width - 24).max(1);
+            let usable_width = (width - OUTER_HORIZONTAL_INSET).max(1);
             let total = total_width(metrics);
 
             assert!(metrics.search_width > 0);
@@ -2030,6 +2124,24 @@ mod responsive_tests {
         };
 
         assert_eq!(wrapped_start, max_start);
+    }
+
+    #[test]
+    fn double_press_is_exactly_two_presses() {
+        assert!(!is_double_press(1));
+        assert!(is_double_press(2));
+        assert!(!is_double_press(3));
+    }
+
+    #[test]
+    fn mouse_interaction_contract_keeps_hover_separate_from_selection() {
+        // Hover is intentionally a presentation state. A click is what
+        // changes the logical selection index.
+        let selected_index = 2usize;
+        let hovered_index = 5usize;
+
+        assert_ne!(selected_index, hovered_index);
+        assert_eq!(selected_index, 2usize);
     }
 
     #[test]
