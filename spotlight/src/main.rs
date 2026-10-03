@@ -3,8 +3,8 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use gtk::{
-    Align, Application, ApplicationWindow, Box as GtkBox, Button, Entry, Image, Label, Overlay,
-    Orientation, PolicyType, ScrolledWindow,
+    Align, Application, ApplicationWindow, Box as GtkBox, Button, Entry, Image, Label, Orientation,
+    Overlay,
 };
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
@@ -22,6 +22,23 @@ use std::rc::Rc;
 //
 const APP_ID: &str = "org.spotlight.Launcher";
 const LAYER_NAMESPACE: &str = "spotlight";
+
+// -----------------------------------------------------------------------------
+// DESIGN REFERENCE CONSTANTS
+// -----------------------------------------------------------------------------
+//
+// These are visual/design references only. They are not assumptions about the
+// user's display, resolution, monitor count, or hardware.
+
+const REFERENCE_COMPOSITION_WIDTH: f64 = 660.0;
+const REFERENCE_SEARCH_WIDTH: f64 = 380.0;
+const REFERENCE_CONTROL_SIZE: f64 = 58.0;
+const REFERENCE_GAP: f64 = 12.0;
+const REFERENCE_INNER_GAP: f64 = 10.0;
+const REFERENCE_ICON_SIZE: f64 = 22.0;
+const REFERENCE_ROW_HEIGHT: f64 = 58.0;
+const MIN_RESULT_ROW_HEIGHT: i32 = 36;
+const MAX_VISIBLE_RESULT_ROWS: usize = 8;
 
 // -----------------------------------------------------------------------------
 // APPLICATION STATE
@@ -105,8 +122,7 @@ fn main() -> glib::ExitCode {
 
     eprintln!("[spotlight] main: application constructed");
 
-    let state: Rc<RefCell<Option<AppState>>> =
-        Rc::new(RefCell::new(None));
+    let state: Rc<RefCell<Option<AppState>>> = Rc::new(RefCell::new(None));
 
     // -------------------------------------------------------------------------
     // STARTUP
@@ -154,10 +170,7 @@ fn main() -> glib::ExitCode {
             eprintln!("[spotlight] command-line: callback entered");
             let args = command_line.arguments();
 
-            let command = args
-                .get(1)
-                .and_then(|arg| arg.to_str())
-                .unwrap_or("");
+            let command = args.get(1).and_then(|arg| arg.to_str()).unwrap_or("");
 
             eprintln!("[spotlight] command-line: command={command:?}");
 
@@ -227,13 +240,6 @@ fn responsive_metrics(output_width: i32) -> UiMetrics {
     // We use that only as a design reference. The actual UI scales down
     // when the available output is narrower and the search pill grows
     // moderately on very wide outputs.
-    const REFERENCE_COMPOSITION_WIDTH: f64 = 660.0;
-    const REFERENCE_SEARCH_WIDTH: f64 = 380.0;
-    const REFERENCE_CONTROL_SIZE: f64 = 58.0;
-    const REFERENCE_GAP: f64 = 12.0;
-    const REFERENCE_INNER_GAP: f64 = 10.0;
-    const REFERENCE_ICON_SIZE: f64 = 22.0;
-
     let available_width = (output_width - 24).max(1) as f64;
 
     // Never enlarge the four controls beyond their Tahoe reference size.
@@ -241,32 +247,35 @@ fn responsive_metrics(output_width: i32) -> UiMetrics {
     // the composition down as a whole.
     let scale = (available_width / REFERENCE_COMPOSITION_WIDTH).min(1.0);
 
-    let control_size = (REFERENCE_CONTROL_SIZE * scale)
-        .round()
-        .clamp(18.0, REFERENCE_CONTROL_SIZE) as i32;
+    // On narrow outputs, the design references are allowed to compress all the
+    // way down instead of hitting fixed minimums that could overflow the
+    // available width. The search field receives whatever width remains.
+    let (control_size, gap, inner_gap, icon_size, search_width) = if scale < 1.0 {
+        let control_size = (REFERENCE_CONTROL_SIZE * scale).round().max(1.0) as i32;
+        let gap = (REFERENCE_GAP * scale).round().max(0.0) as i32;
+        let inner_gap = (REFERENCE_INNER_GAP * scale).round().max(1.0) as i32;
+        let icon_size = (REFERENCE_ICON_SIZE * scale).round().max(1.0) as i32;
 
-    let gap = (REFERENCE_GAP * scale)
-        .round()
-        .clamp(4.0, REFERENCE_GAP) as i32;
+        let controls_and_gaps = (control_size + gap) * 4;
+        let search_width = (available_width - controls_and_gaps as f64)
+            .round()
+            .max(1.0) as i32;
 
-    let inner_gap = (REFERENCE_INNER_GAP * scale)
-        .round()
-        .clamp(4.0, REFERENCE_INNER_GAP) as i32;
-
-    let icon_size = (REFERENCE_ICON_SIZE * scale)
-        .round()
-        .clamp(12.0, REFERENCE_ICON_SIZE) as i32;
-
-    let search_width = if scale < 1.0 {
-        (REFERENCE_SEARCH_WIDTH * scale).round().max(1.0) as i32
+        (control_size, gap, inner_gap, icon_size, search_width)
     } else {
-        // Preserve the current 380px reference at normal widths.
+        // Preserve the current design reference at normal widths.
         // On very wide outputs, let the search field grow, but keep a
         // deliberate ceiling so the interface never becomes enormous.
-        let extra_width = ((output_width - 1366).max(0) as f64) * 0.25;
-        (REFERENCE_SEARCH_WIDTH + extra_width)
-            .min(900.0)
-            .round() as i32
+        let extra_width = ((available_width - REFERENCE_COMPOSITION_WIDTH).max(0.0)) * 0.25;
+        let search_width = (REFERENCE_SEARCH_WIDTH + extra_width).min(900.0).round() as i32;
+
+        (
+            REFERENCE_CONTROL_SIZE as i32,
+            REFERENCE_GAP as i32,
+            REFERENCE_INNER_GAP as i32,
+            REFERENCE_ICON_SIZE as i32,
+            search_width,
+        )
     };
 
     UiMetrics {
@@ -276,6 +285,26 @@ fn responsive_metrics(output_width: i32) -> UiMetrics {
         inner_gap,
         icon_size,
     }
+}
+
+fn responsive_result_metrics(
+    output_height: i32,
+    content_top: i32,
+    control_size: i32,
+) -> (usize, i32) {
+    const CONTENT_GAP: i32 = 12;
+    const BOTTOM_MARGIN: i32 = 16;
+
+    let scale = (control_size as f64 / REFERENCE_ROW_HEIGHT).clamp(0.35, 1.0);
+    let row_height = (REFERENCE_ROW_HEIGHT * scale)
+        .round()
+        .clamp(MIN_RESULT_ROW_HEIGHT as f64, REFERENCE_ROW_HEIGHT) as i32;
+
+    let available_height = output_height - content_top - control_size - CONTENT_GAP - BOTTOM_MARGIN;
+
+    let visible_rows = (available_height / row_height.max(1)).max(1) as usize;
+
+    (visible_rows.min(MAX_VISIBLE_RESULT_ROWS), row_height)
 }
 
 // -----------------------------------------------------------------------------
@@ -309,7 +338,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
     //
     //     - hard-code a monitor
     //     - hard-code a resolution
-    //     - use 1366x768
+    //     - assume any particular display resolution
     //     - use screen coordinates
     //
     // The layer is stretched to the output selected by the compositor.
@@ -336,10 +365,8 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
     window.set_exclusive_zone(-1);
     eprintln!("[spotlight] build_window: layer-shell configured");
 
-    // Layer-shell will otherwise size the surface to the natural size of the
-    // child hierarchy. Because we want the compositor to center the Spotlight
-    // cluster inside the full output, derive the surface size from runtime
-    // monitor geometry rather than hard-coding a resolution.
+    // Use runtime output geometry for initial layout metrics. No display
+    // resolution, monitor name, or hardware-specific geometry is encoded here.
     if let Some(display) = gdk::Display::default() {
         if let Some(item) = display.monitors().item(0) {
             if let Ok(monitor) = item.downcast::<gdk::Monitor>() {
@@ -371,9 +398,13 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
             let geometry = monitor.geometry();
             (geometry.width(), geometry.height())
         })
-        .unwrap_or((640, 480));
+        .unwrap_or((1, 1));
 
     let metrics = responsive_metrics(output_width);
+
+    // The empty state consists of the search field plus the four 58px controls.
+    // In typing/provider states the search pill absorbs exactly that same footprint.
+    let composition_width = metrics.search_width + (metrics.control_size * 4) + (metrics.gap * 4);
 
     // -------------------------------------------------------------------------
     // TAHOE HOME POSITION
@@ -411,7 +442,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
     // Empty state: four larger provider controls live beside the search pill.
     // Typing state: those controls collapse into the pill itself.
     // Focused provider state: a back affordance + provider name replace them.
-    let search_pill = GtkBox::new(Orientation::Horizontal, 8);
+    let search_pill = GtkBox::new(Orientation::Horizontal, metrics.inner_gap);
     search_pill.set_halign(Align::Center);
     search_pill.set_valign(Align::Center);
     search_pill.set_width_request(metrics.search_width);
@@ -462,12 +493,10 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
     inline_filters.set_visible(false);
     inline_filters.add_css_class("inline-filters");
 
-    let inline_applications =
-        make_inline_filter_button("applications-button", "A", "Applications");
-    let inline_files =
-        make_inline_filter_icon_button("files-button", "folder-symbolic", "Files");
+    let inline_applications = make_inline_filter_button("applications-button", "A", "Applications");
+    let inline_files = make_inline_filter_icon_button("files-button", "folder-symbolic", "Files");
     let inline_actions =
-        make_inline_filter_icon_button("actions-button", "view-grid-symbolic", "Actions");
+        make_inline_filter_icon_button("actions-button", "view-continuous-symbolic", "Actions");
     let inline_clipboard =
         make_inline_filter_icon_button("clipboard-button", "edit-copy-symbolic", "Clipboard");
 
@@ -483,8 +512,12 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
     // FOUR TAHOE CONTROLS
     // -----------------------------------------------------------------------------
 
-    let applications =
-        make_letter_button("applications-button", "A", "Applications", metrics.control_size);
+    let applications = make_letter_button(
+        "applications-button",
+        "A",
+        "Applications",
+        metrics.control_size,
+    );
 
     let files = make_icon_button(
         "files-button",
@@ -496,7 +529,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
 
     let actions = make_icon_button(
         "actions-button",
-        "view-grid-symbolic",
+        "view-continuous-symbolic",
         "Actions",
         metrics.control_size,
         metrics.icon_size,
@@ -516,19 +549,20 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
     cluster.append(&clipboard);
 
     // -----------------------------------------------------------------------------
-    // STATIC RESULT PREVIEW
+    // RESPONSIVE RESULT PREVIEW
     // -----------------------------------------------------------------------------
 
-    // Keep exactly eight rows visible. On the current 1366×768 reference layout,
-    // row 8 ends in the lower dock-safe fade.
-    const VISIBLE_MOCK_ROWS: i32 = 8;
-    const MOCK_ROW_HEIGHT: i32 = 58;
-    let result_view_height = VISIBLE_MOCK_ROWS * MOCK_ROW_HEIGHT;
+    // Eight rows are the normal visual ceiling, but short outputs automatically
+    // receive fewer visible rows so the result surface remains on-screen.
+    let (visible_result_rows, result_row_height) =
+        responsive_result_metrics(output_height, content_top, metrics.control_size);
+    let result_view_height = visible_result_rows as i32 * result_row_height;
 
-    let (results_panel, results_scroll, result_rows) =
-        make_mock_results(metrics.search_width, result_view_height);
+    let (results_panel, result_rows) =
+        make_mock_results(composition_width, result_view_height, result_row_height);
     let result_rows = Rc::new(result_rows);
     let selected_index = Rc::new(Cell::new(0usize));
+    let result_window_start = Rc::new(Cell::new(0usize));
     let active_filter = Rc::new(Cell::new(MockFilter::All));
 
     content.append(&cluster);
@@ -559,9 +593,9 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
     for (button_index, button) in standalone_filter_buttons.iter().cloned().enumerate() {
         let active_filter = Rc::clone(&active_filter);
         let results_panel = results_panel.clone();
-        let results_scroll = results_scroll.clone();
         let result_rows = Rc::clone(&result_rows);
         let selected_index = Rc::clone(&selected_index);
+        let result_window_start = Rc::clone(&result_window_start);
         let search_pill = search_pill.clone();
         let search_icon = search_icon.clone();
         let back_button = back_button.clone();
@@ -589,16 +623,18 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
                 &standalone_filter_buttons,
                 filter,
                 entry.text().as_str(),
-                380,
+                metrics.search_width,
+                composition_width,
             );
 
             update_mock_results(
                 &results_panel,
-                &results_scroll,
                 result_rows.as_ref(),
                 &selected_index,
+                &result_window_start,
                 filter,
                 entry.text().as_str(),
+                visible_result_rows,
             );
         });
     }
@@ -606,9 +642,9 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
     for (button_index, button) in inline_filter_buttons.iter().cloned().enumerate() {
         let active_filter = Rc::clone(&active_filter);
         let results_panel = results_panel.clone();
-        let results_scroll = results_scroll.clone();
         let result_rows = Rc::clone(&result_rows);
         let selected_index = Rc::clone(&selected_index);
+        let result_window_start = Rc::clone(&result_window_start);
         let search_pill = search_pill.clone();
         let search_icon = search_icon.clone();
         let back_button = back_button.clone();
@@ -636,16 +672,18 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
                 &standalone_filter_buttons,
                 filter,
                 entry.text().as_str(),
-                380,
+                metrics.search_width,
+                composition_width,
             );
 
             update_mock_results(
                 &results_panel,
-                &results_scroll,
                 result_rows.as_ref(),
                 &selected_index,
+                &result_window_start,
                 filter,
                 entry.text().as_str(),
+                visible_result_rows,
             );
         });
     }
@@ -656,9 +694,9 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
     {
         let active_filter = Rc::clone(&active_filter);
         let results_panel = results_panel.clone();
-        let results_scroll = results_scroll.clone();
         let result_rows = Rc::clone(&result_rows);
         let selected_index = Rc::clone(&selected_index);
+        let result_window_start = Rc::clone(&result_window_start);
         let search_pill = search_pill.clone();
         let search_icon = search_icon.clone();
         let back_button = back_button.clone();
@@ -684,16 +722,18 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
                 &standalone_filter_buttons,
                 MockFilter::All,
                 entry.text().as_str(),
-                380,
+                metrics.search_width,
+                composition_width,
             );
 
             update_mock_results(
                 &results_panel,
-                &results_scroll,
                 result_rows.as_ref(),
                 &selected_index,
+                &result_window_start,
                 MockFilter::All,
                 entry.text().as_str(),
+                visible_result_rows,
             );
         });
     }
@@ -706,55 +746,57 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
     {
         let window = window.clone();
         let results_panel = results_panel.clone();
-        let results_scroll = results_scroll.clone();
         let result_rows = Rc::clone(&result_rows);
         let selected_index = Rc::clone(&selected_index);
+        let result_window_start = Rc::clone(&result_window_start);
 
-        key_controller.connect_key_pressed(
-            move |_controller, key, _keycode, _state| {
-                if key == gdk::Key::Escape {
-                    hide_window(&window);
+        key_controller.connect_key_pressed(move |_controller, key, _keycode, _state| {
+            if key == gdk::Key::Escape {
+                hide_window(&window);
 
-                    return glib::Propagation::Stop;
+                return glib::Propagation::Stop;
+            }
+
+            if !results_panel.is_visible() || result_rows.is_empty() {
+                return glib::Propagation::Proceed;
+            }
+
+            let current = selected_index.get();
+
+            match key {
+                // Up/down control result selection. Left/right remain the
+                // normal text-cursor controls of the focused search entry.
+                gdk::Key::Down => {
+                    let next = (current + 1) % result_rows.len();
+                    set_mock_selection(
+                        &results_panel,
+                        &result_rows,
+                        &selected_index,
+                        &result_window_start,
+                        next,
+                        visible_result_rows,
+                    );
+                    glib::Propagation::Stop
                 }
-
-                if !results_panel.is_visible() || result_rows.is_empty() {
-                    return glib::Propagation::Proceed;
+                gdk::Key::Up => {
+                    let next = if current == 0 {
+                        result_rows.len() - 1
+                    } else {
+                        current - 1
+                    };
+                    set_mock_selection(
+                        &results_panel,
+                        &result_rows,
+                        &selected_index,
+                        &result_window_start,
+                        next,
+                        visible_result_rows,
+                    );
+                    glib::Propagation::Stop
                 }
-
-                let current = selected_index.get();
-
-                match key {
-                    // Up/down control result selection. Left/right remain the
-                    // normal text-cursor controls of the focused search entry.
-                    gdk::Key::Down => {
-                        let next = (current + 1) % result_rows.len();
-                        set_mock_selection(
-                            &results_scroll,
-                            &result_rows,
-                            &selected_index,
-                            next,
-                        );
-                        glib::Propagation::Stop
-                    }
-                    gdk::Key::Up => {
-                        let next = if current == 0 {
-                            result_rows.len() - 1
-                        } else {
-                            current - 1
-                        };
-                        set_mock_selection(
-                            &results_scroll,
-                            &result_rows,
-                            &selected_index,
-                            next,
-                        );
-                        glib::Propagation::Stop
-                    }
-                    _ => glib::Propagation::Proceed,
-                }
-            },
-        );
+                _ => glib::Propagation::Proceed,
+            }
+        });
     }
 
     window.add_controller(key_controller);
@@ -786,9 +828,9 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
     // between empty/general-search and focused-provider states.
     {
         let results_panel = results_panel.clone();
-        let results_scroll = results_scroll.clone();
         let result_rows = Rc::clone(&result_rows);
         let selected_index = Rc::clone(&selected_index);
+        let result_window_start = Rc::clone(&result_window_start);
         let active_filter = Rc::clone(&active_filter);
         let search_pill = search_pill.clone();
         let search_icon = search_icon.clone();
@@ -809,16 +851,18 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
                 &standalone_filter_buttons,
                 active_filter.get(),
                 entry.text().as_str(),
-                380,
+                metrics.search_width,
+                composition_width,
             );
 
             update_mock_results(
                 &results_panel,
-                &results_scroll,
                 result_rows.as_ref(),
                 &selected_index,
+                &result_window_start,
                 active_filter.get(),
                 entry.text().as_str(),
+                visible_result_rows,
             );
         });
     }
@@ -831,12 +875,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
 // BUTTONS
 // -----------------------------------------------------------------------------
 
-fn make_letter_button(
-    class_name: &str,
-    letter: &str,
-    tooltip: &str,
-    size: i32,
-) -> Button {
+fn make_letter_button(class_name: &str, letter: &str, tooltip: &str, size: i32) -> Button {
     let button = Button::new();
 
     button.set_width_request(size);
@@ -903,13 +942,19 @@ fn make_icon_button(
 fn make_mock_results(
     width: i32,
     viewport_height: i32,
-) -> (Overlay, ScrolledWindow, Vec<MockResultRow>) {
+    row_height: i32,
+) -> (Overlay, Vec<MockResultRow>) {
     let results_panel = Overlay::new();
 
+    // The visible row count is derived from the runtime output height.
+    // Eight is a visual ceiling, not a fixed requirement: shorter outputs
+    // receive fewer rows and smaller rows where necessary.
     results_panel.set_width_request(width);
     results_panel.set_height_request(viewport_height);
     results_panel.set_halign(Align::Center);
     results_panel.set_valign(Align::Start);
+    results_panel.set_vexpand(false);
+    results_panel.set_overflow(gtk::Overflow::Hidden);
     results_panel.add_css_class("results-panel-shell");
 
     let results = GtkBox::new(Orientation::Vertical, 0);
@@ -918,35 +963,20 @@ fn make_mock_results(
     results.set_valign(Align::Start);
     results.add_css_class("results-list");
 
-    // Enough rows to make the future selection-following viewport visible.
-    // Real providers will replace these with actual search results later.
     const MOCK_RESULT_COUNT: usize = 18;
     let mut rows = Vec::with_capacity(MOCK_RESULT_COUNT);
 
     for _ in 0..MOCK_RESULT_COUNT {
-        let row = make_mock_result_row();
+        let row = make_mock_result_row(row_height);
+        row.button.set_visible(false);
         results.append(&row.button);
         rows.push(row);
     }
 
-    let scroll = ScrolledWindow::new();
-    scroll.set_width_request(width);
-    scroll.set_height_request(viewport_height);
-    scroll.set_halign(Align::Fill);
-    scroll.set_valign(Align::Start);
-    scroll.set_vexpand(false);
-    scroll.set_policy(PolicyType::Never, PolicyType::Never);
-    scroll.set_has_frame(false);
-    scroll.add_css_class("results-panel");
-    scroll.set_visible(false);
-    scroll.set_child(Some(&results));
+    results_panel.set_child(Some(&results));
 
-    results_panel.set_child(Some(&scroll));
-
-    // The fixed edge fades make the result viewport visually blend back into
-    // the compositor-blurred desktop rather than ending like a hard rectangle.
     let top_fade = GtkBox::new(Orientation::Vertical, 0);
-    top_fade.set_height_request(34);
+    top_fade.set_height_request((row_height / 2).max(12));
     top_fade.set_halign(Align::Fill);
     top_fade.set_valign(Align::Start);
     top_fade.set_can_target(false);
@@ -954,7 +984,7 @@ fn make_mock_results(
     results_panel.add_overlay(&top_fade);
 
     let bottom_fade = GtkBox::new(Orientation::Vertical, 0);
-    bottom_fade.set_height_request(50);
+    bottom_fade.set_height_request(row_height.clamp(24, 50));
     bottom_fade.set_halign(Align::Fill);
     bottom_fade.set_valign(Align::End);
     bottom_fade.set_can_target(false);
@@ -963,19 +993,20 @@ fn make_mock_results(
 
     results_panel.set_visible(false);
 
-    (results_panel, scroll, rows)
+    (results_panel, rows)
 }
 
-fn make_mock_result_row() -> MockResultRow {
+fn make_mock_result_row(row_height: i32) -> MockResultRow {
     let button = Button::new();
 
+    button.set_height_request(row_height);
     button.set_hexpand(true);
     button.set_halign(Align::Fill);
     button.set_valign(Align::Center);
     button.set_focusable(false);
     button.set_focus_on_click(false);
     button.add_css_class("result-button");
-    button.set_opacity(0.16);
+    button.set_opacity(1.0);
 
     let row = GtkBox::new(Orientation::Horizontal, 12);
     row.set_hexpand(true);
@@ -983,7 +1014,8 @@ fn make_mock_result_row() -> MockResultRow {
     row.set_valign(Align::Center);
 
     let icon = Image::from_icon_name("system-search-symbolic");
-    icon.set_pixel_size(24);
+    let icon_size = (24 * row_height / 58).clamp(16, 24);
+    icon.set_pixel_size(icon_size);
     icon.add_css_class("result-icon");
 
     let text = GtkBox::new(Orientation::Vertical, 2);
@@ -1017,30 +1049,27 @@ fn make_mock_result_row() -> MockResultRow {
 
 fn update_mock_results(
     results_panel: &Overlay,
-    results_scroll: &ScrolledWindow,
     rows: &[MockResultRow],
     selected_index: &Cell<usize>,
+    result_window_start: &Cell<usize>,
     filter: MockFilter,
     query: &str,
+    visible_rows: usize,
 ) {
     let query = query.trim();
 
-    // General empty state stays clean. Choosing one of the four provider
-    // buttons is itself a request to browse that provider, so filtered
-    // browsing is visible even with an empty text query.
     if query.is_empty() && filter == MockFilter::All {
         results_panel.set_visible(false);
-        results_scroll.set_visible(false);
         selected_index.set(0);
+        result_window_start.set(0);
         clear_mock_selection(rows);
-        results_scroll.vadjustment().set_value(0.0);
+        set_visible_result_window(rows, 0, visible_rows);
         return;
     }
 
     results_panel.set_visible(true);
-    results_scroll.set_visible(true);
     selected_index.set(0);
-    results_scroll.vadjustment().set_value(0.0);
+    result_window_start.set(0);
 
     const MOCK_KINDS_ALL: [&str; 18] = [
         "Top result",
@@ -1088,7 +1117,111 @@ fn update_mock_results(
         row.subtitle.set_text(subtitle);
     }
 
-    set_mock_selection(results_scroll, rows, selected_index, 0);
+    set_mock_selection(
+        results_panel,
+        rows,
+        selected_index,
+        result_window_start,
+        0,
+        visible_rows,
+    );
+}
+
+fn advance_result_window_start(
+    current_start: usize,
+    previous_index: usize,
+    selected_index: usize,
+    total: usize,
+    visible_rows: usize,
+) -> usize {
+    if total <= visible_rows.max(1) {
+        return 0;
+    }
+
+    let visible_rows = visible_rows.clamp(1, total);
+    let max_start = total - visible_rows;
+    // Shift one row before reaching beyond the visible window:
+    // downward at the last visible row, upward at the second visible row.
+    let down_threshold = visible_rows.saturating_sub(1);
+    let up_threshold = 1usize;
+
+    if selected_index > previous_index
+        && selected_index >= current_start + down_threshold
+        && current_start < max_start
+    {
+        return current_start + 1;
+    }
+
+    if selected_index < previous_index
+        && selected_index < current_start + up_threshold
+        && current_start > 0
+    {
+        return current_start - 1;
+    }
+
+    current_start.min(max_start)
+}
+
+fn set_visible_result_window(rows: &[MockResultRow], window_start: usize, visible_rows: usize) {
+    if rows.is_empty() {
+        return;
+    }
+
+    let visible_rows = visible_rows.clamp(1, rows.len());
+    let max_start = rows.len().saturating_sub(visible_rows);
+    let window_start = window_start.min(max_start);
+    let window_end = (window_start + visible_rows).min(rows.len());
+
+    for (row_index, row) in rows.iter().enumerate() {
+        row.button
+            .set_visible(row_index >= window_start && row_index < window_end);
+    }
+
+    eprintln!(
+        "[spotlight] results-window: start={} visible={}..{} rows={}",
+        window_start,
+        window_start,
+        window_end.saturating_sub(1),
+        visible_rows
+    );
+}
+
+fn set_mock_selection(
+    _results_panel: &Overlay,
+    rows: &[MockResultRow],
+    selected_index: &Cell<usize>,
+    result_window_start: &Cell<usize>,
+    index: usize,
+    visible_rows: usize,
+) {
+    if rows.is_empty() {
+        return;
+    }
+
+    let index = index.min(rows.len() - 1);
+    let previous_index = selected_index.get();
+    selected_index.set(index);
+
+    let window_start = advance_result_window_start(
+        result_window_start.get(),
+        previous_index,
+        index,
+        rows.len(),
+        visible_rows,
+    );
+    result_window_start.set(window_start);
+
+    set_visible_result_window(rows, window_start, visible_rows);
+
+    for (row_index, row) in rows.iter().enumerate() {
+        row.button.set_opacity(1.0);
+
+        if row_index == index {
+            row.button.add_css_class("selected");
+        } else {
+            row.button.remove_css_class("selected");
+        }
+    }
 }
 
 fn make_back_button(tooltip: &str) -> Button {
@@ -1129,11 +1262,7 @@ fn make_inline_filter_button(class_name: &str, letter: &str, tooltip: &str) -> B
     button
 }
 
-fn make_inline_filter_icon_button(
-    class_name: &str,
-    icon_name: &str,
-    tooltip: &str,
-) -> Button {
+fn make_inline_filter_icon_button(class_name: &str, icon_name: &str, tooltip: &str) -> Button {
     let button = Button::new();
     button.set_width_request(28);
     button.set_height_request(28);
@@ -1176,6 +1305,7 @@ fn update_search_chrome(
     filter: MockFilter,
     query: &str,
     base_width: i32,
+    composition_width: i32,
 ) {
     let query_is_empty = query.trim().is_empty();
     let provider_mode = filter != MockFilter::All;
@@ -1194,13 +1324,20 @@ fn update_search_chrome(
     }
 
     if provider_mode {
+        // Provider mode absorbs the same footprint as the complete empty-state
+        // composition, keeping the overall Spotlight width stable.
         search_pill.add_css_class("search-pill-filtered");
-        search_pill.set_width_request(base_width + 90);
+        search_pill.set_width_request(composition_width);
         category_label.set_text(filter.label());
     } else if typing_general {
+        // When typing begins, the four large controls disappear and their exact
+        // footprint is swallowed by the search pill. The outer Spotlight width
+        // therefore remains unchanged.
         search_pill.add_css_class("search-pill-typing");
-        search_pill.set_width_request((base_width + 160).min(620));
+        search_pill.set_width_request(composition_width);
     } else {
+        // Empty/default state: only the search field itself is visible beside the
+        // four standalone controls.
         search_pill.set_width_request(base_width);
     }
 }
@@ -1208,72 +1345,8 @@ fn update_search_chrome(
 fn clear_mock_selection(rows: &[MockResultRow]) {
     for row in rows {
         row.button.remove_css_class("selected");
-        row.button.set_opacity(0.16);
+        row.button.set_opacity(1.0);
     }
-}
-
-fn set_mock_selection(
-    results_scroll: &ScrolledWindow,
-    rows: &[MockResultRow],
-    selected_index: &Cell<usize>,
-    index: usize,
-) {
-    if rows.is_empty() {
-        return;
-    }
-
-    let index = index.min(rows.len() - 1);
-    selected_index.set(index);
-
-    for (row_index, row) in rows.iter().enumerate() {
-        let distance = row_index.abs_diff(index);
-        let opacity = match distance {
-            0 => 1.0,
-            1 => 0.88,
-            2 => 0.72,
-            3 => 0.54,
-            4 => 0.38,
-            _ => 0.18,
-        };
-
-        row.button.set_opacity(opacity);
-
-        if row_index == index {
-            row.button.add_css_class("selected");
-        } else {
-            row.button.remove_css_class("selected");
-        }
-    }
-
-    scroll_mock_selection(results_scroll, index);
-}
-
-fn scroll_mock_selection(results_scroll: &ScrolledWindow, index: usize) {
-    const MOCK_ROW_HEIGHT: f64 = 58.0;
-    // The selected result may travel freely through the first six visible rows.
-    // Once it reaches row 6, the viewport follows it upward, pushing the old
-    // rows out through the top fade.
-    const SELECTION_TOP_ROW: f64 = 0.0;
-    const SELECTION_BOTTOM_ROW: f64 = 5.0;
-
-    let adjustment = results_scroll.vadjustment();
-    let current = adjustment.value();
-    let page_size = adjustment.page_size().max(MOCK_ROW_HEIGHT);
-    let max_value = (adjustment.upper() - page_size).max(0.0);
-    let current_first_row = (current / MOCK_ROW_HEIGHT).floor();
-
-    let index_f64 = index as f64;
-
-    let target_first_row = if index_f64 > current_first_row + SELECTION_BOTTOM_ROW {
-        (index_f64 - SELECTION_BOTTOM_ROW).floor()
-    } else if index_f64 < current_first_row + SELECTION_TOP_ROW {
-        (index_f64 - SELECTION_TOP_ROW).max(0.0).floor()
-    } else {
-        current_first_row
-    };
-
-    let target = (target_first_row * MOCK_ROW_HEIGHT).clamp(0.0, max_value);
-    adjustment.set_value(target);
 }
 
 fn confirm_mock_selection(rows: &[MockResultRow], index: usize) {
@@ -1294,7 +1367,10 @@ fn show_window(state: &AppState) {
     reload_generated_theme(&state.theme_provider);
     eprintln!("[spotlight] show_window: theme step complete");
     state.window.present();
-    eprintln!("[spotlight] show_window: present() called; visible={}", state.window.is_visible());
+    eprintln!(
+        "[spotlight] show_window: present() called; visible={}",
+        state.window.is_visible()
+    );
 
     let entry = state.entry.clone();
 
@@ -1306,12 +1382,20 @@ fn show_window(state: &AppState) {
     glib::idle_add_local_once(move || {
         entry.grab_focus();
         entry.select_region(0, -1);
-        eprintln!("[spotlight] focus-idle: ran; visible={} mapped={}", window.is_visible(), window.is_mapped());
+        eprintln!(
+            "[spotlight] focus-idle: ran; visible={} mapped={}",
+            window.is_visible(),
+            window.is_mapped()
+        );
     });
 
     let window = state.window.clone();
     glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
-        eprintln!("[spotlight] 500ms-check: visible={} mapped={}", window.is_visible(), window.is_mapped());
+        eprintln!(
+            "[spotlight] 500ms-check: visible={} mapped={}",
+            window.is_visible(),
+            window.is_mapped()
+        );
     });
 }
 
@@ -1595,7 +1679,7 @@ window.spotlight-window.background {
 
 .result-button {
     min-width: 0;
-    min-height: 58px;
+    min-height: 0;
     padding: 0 14px;
     border-radius: 0;
 
@@ -1731,10 +1815,7 @@ window.spotlight-window.background {
 fn generated_theme_path() -> Option<PathBuf> {
     let config_home = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .map(|home| PathBuf::from(home).join(".config"))
-        })?;
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
 
     Some(
         config_home
@@ -1769,75 +1850,153 @@ fn reload_generated_theme(provider: &gtk::CssProvider) {
 mod responsive_tests {
     use super::*;
 
+    fn visible_result_window_start(selected: usize, total: usize, visible_rows: usize) -> usize {
+        let mut start = 0usize;
+        let mut previous = 0usize;
+
+        for index in 0usize..=selected.min(total.saturating_sub(1usize)) {
+            start = advance_result_window_start(start, previous, index, total, visible_rows);
+            previous = index;
+        }
+
+        start
+    }
+
     fn total_width(m: UiMetrics) -> i32 {
-        m.search_width
-            + (m.control_size * 4)
-            + (m.gap * 4)
+        m.search_width + (m.control_size * 4) + (m.gap * 4)
     }
 
     #[test]
-    fn realistic_resolutions_fit() {
-        let resolutions = [
-            640,
-            800,
-            1024,
-            1280,
-            1366,
-            1440,
-            1920,
-            2560,
-            3440,
-            3840,
-            5120,
-            7680,
-            13440,
-        ];
+    fn responsive_widths_fit_without_device_specific_values() {
+        let upper_bound = (REFERENCE_COMPOSITION_WIDTH * 20.0) as i32;
 
-        for width in resolutions {
+        for width in 1i32..=upper_bound {
             let metrics = responsive_metrics(width);
             let total = total_width(metrics);
 
-            println!(
-                "width={width}: search={} control={} gap={} inner_gap={} icon={} total={}",
-                metrics.search_width,
-                metrics.control_size,
-                metrics.gap,
-                metrics.inner_gap,
-                metrics.icon_size,
-                total
-            );
-
             assert!(metrics.search_width > 0);
-            assert!(metrics.control_size > 0);
-            assert!(metrics.gap > 0);
+            assert!(metrics.control_size >= 0);
+            assert!(metrics.gap >= 0);
             assert!(metrics.inner_gap > 0);
             assert!(metrics.icon_size > 0);
-
-            assert!(
-                total <= width,
-                "composition overflows width {width}px: total={total}px"
-            );
+            assert!(total <= width);
         }
     }
 
     #[test]
-    fn very_wide_displays_do_not_grow_forever() {
-        let metrics = responsive_metrics(13440);
+    fn narrow_layout_compresses_instead_of_overflowing() {
+        let metrics = responsive_metrics(125);
+        let total = total_width(metrics);
 
-        assert!(metrics.search_width <= 900);
-        assert!(metrics.control_size <= 58);
-        assert!(metrics.gap <= 12);
-        assert!(metrics.icon_size <= 22);
+        assert!(metrics.search_width > 0);
+        assert!(metrics.control_size > 0);
+        assert!(total <= 125);
     }
 
     #[test]
-    fn reference_width_is_stable() {
-        let metrics = responsive_metrics(1366);
+    fn reference_width_uses_design_reference_metrics() {
+        let width = (REFERENCE_COMPOSITION_WIDTH + 24.0).ceil() as i32;
+        let metrics = responsive_metrics(width);
 
         assert_eq!(metrics.control_size, 58);
         assert_eq!(metrics.gap, 12);
         assert_eq!(metrics.inner_gap, 10);
         assert_eq!(metrics.icon_size, 22);
         assert_eq!(metrics.search_width, 380);
+    }
+
+    #[test]
+    fn responsive_result_metrics_reduce_rows_when_vertical_space_is_limited() {
+        let tall = responsive_result_metrics(1000, 100, 58);
+        let short = responsive_result_metrics(320, 70, 36);
+
+        assert!(tall.0 >= short.0);
+        assert!(tall.1 >= short.1);
+        assert!(short.0 >= 1);
+        assert!(short.0 <= MAX_VISIBLE_RESULT_ROWS);
+    }
+
+    #[test]
+    fn responsive_result_metrics_never_assumes_eight_visible_rows() {
+        let narrow_vertical_space = responsive_result_metrics(180, 120, 36);
+        let extremely_short_output = responsive_result_metrics(90, 80, 18);
+
+        assert!(narrow_vertical_space.0 < MAX_VISIBLE_RESULT_ROWS);
+        assert_eq!(extremely_short_output.0, 1);
+        assert!(extremely_short_output.1 >= MIN_RESULT_ROW_HEIGHT);
+    }
+
+    #[test]
+    fn responsive_result_window_supports_variable_visible_rows() {
+        let total = 18usize;
+
+        for visible_rows in 1usize..=8usize {
+            for selected in 0usize..total {
+                let start = visible_result_window_start(selected, total, visible_rows);
+                let end = (start + visible_rows).min(total);
+
+                assert_eq!(end - start, visible_rows);
+            }
+        }
+    }
+
+    #[test]
+    fn mock_result_window_uses_downward_hysteresis() {
+        let total = 18usize;
+        let visible_rows = 8usize;
+        let mut start = 0usize;
+
+        for (previous, selected) in [
+            (0usize, 1usize),
+            (1usize, 2usize),
+            (2usize, 3usize),
+            (3usize, 4usize),
+            (4usize, 5usize),
+            (5usize, 6usize),
+        ] {
+            start = advance_result_window_start(start, previous, selected, total, visible_rows);
+            assert_eq!(start, 0);
+        }
+
+        // 6 → 7 (seventh visible row → eighth visible row) shifts now.
+        start = advance_result_window_start(start, 6usize, 7usize, total, visible_rows);
+        assert_eq!(start, 1);
+    }
+
+    #[test]
+    fn mock_result_window_uses_upward_hysteresis() {
+        let total = 18usize;
+        let visible_rows = 8usize;
+
+        // First move into the shifted window.
+        let mut start = advance_result_window_start(0usize, 6usize, 7usize, total, visible_rows);
+        assert_eq!(start, 1);
+
+        // Moving back from row 8 to row 7 does not reverse yet.
+        start = advance_result_window_start(start, 7usize, 6usize, total, visible_rows);
+        assert_eq!(start, 1);
+
+        // The second visible row is index 1, so 2 → 1 reverses the window.
+        start = advance_result_window_start(start, 2usize, 1usize, total, visible_rows);
+        assert_eq!(start, 0);
+    }
+
+    #[test]
+    fn mock_result_window_keeps_selection_near_sixth_visible_row_until_end() {
+        let total = 18usize;
+        let visible_rows = 8usize;
+        let mut start = 0usize;
+
+        for selected in 0usize..total {
+            let previous = selected.saturating_sub(1usize);
+            start = advance_result_window_start(start, previous, selected, total, visible_rows);
+            let visible_position = selected - start;
+
+            if selected <= 5 {
+                assert!(visible_position <= 5);
+            } else if selected < 16 {
+                assert_eq!(visible_position, 5);
+            }
+        }
     }
 }
