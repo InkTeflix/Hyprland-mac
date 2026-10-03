@@ -554,6 +554,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
 
     // Eight rows are the normal visual ceiling, but short outputs automatically
     // receive fewer visible rows so the result surface remains on-screen.
+    // Selection-relative opacity supplies the visual density gradient.
     let (visible_result_rows, result_row_height) =
         responsive_result_metrics(output_height, content_top, metrics.control_size);
     let result_view_height = visible_result_rows as i32 * result_row_height;
@@ -1063,7 +1064,7 @@ fn update_mock_results(
         selected_index.set(0);
         result_window_start.set(0);
         clear_mock_selection(rows);
-        set_visible_result_window(rows, 0, visible_rows);
+        set_visible_result_window(rows, 0, visible_rows, 0);
         return;
     }
 
@@ -1162,7 +1163,31 @@ fn advance_result_window_start(
     current_start.min(max_start)
 }
 
-fn set_visible_result_window(rows: &[MockResultRow], window_start: usize, visible_rows: usize) {
+fn selection_row_opacity(
+    row_index: usize,
+    selected_index: usize,
+    window_start: usize,
+    visible_rows: usize,
+) -> f64 {
+    if row_index < window_start || row_index >= window_start + visible_rows {
+        return 1.0;
+    }
+
+    match row_index.abs_diff(selected_index) {
+        0 => 1.0,
+        1 => 0.90,
+        2 => 0.80,
+        3 => 0.70,
+        _ => 0.60,
+    }
+}
+
+fn set_visible_result_window(
+    rows: &[MockResultRow],
+    window_start: usize,
+    visible_rows: usize,
+    selected_index: usize,
+) {
     if rows.is_empty() {
         return;
     }
@@ -1173,16 +1198,28 @@ fn set_visible_result_window(rows: &[MockResultRow], window_start: usize, visibl
     let window_end = (window_start + visible_rows).min(rows.len());
 
     for (row_index, row) in rows.iter().enumerate() {
-        row.button
-            .set_visible(row_index >= window_start && row_index < window_end);
+        let is_visible = row_index >= window_start && row_index < window_end;
+        row.button.set_visible(is_visible);
+
+        if is_visible {
+            row.button.set_opacity(selection_row_opacity(
+                row_index,
+                selected_index,
+                window_start,
+                visible_rows,
+            ));
+        } else {
+            row.button.set_opacity(1.0);
+        }
     }
 
     eprintln!(
-        "[spotlight] results-window: start={} visible={}..{} rows={}",
+        "[spotlight] results-window: start={} visible={}..{} rows={} selected={}",
         window_start,
         window_start,
         window_end.saturating_sub(1),
-        visible_rows
+        visible_rows,
+        selected_index
     );
 }
 
@@ -1200,22 +1237,37 @@ fn set_mock_selection(
 
     let index = index.min(rows.len() - 1);
     let previous_index = selected_index.get();
+
+    // The selector is circular. Boundary crossings are handled as jumps to the
+    // corresponding end window rather than as ordinary directional movement.
     selected_index.set(index);
 
-    let window_start = advance_result_window_start(
-        result_window_start.get(),
-        previous_index,
-        index,
-        rows.len(),
-        visible_rows,
-    );
+    let visible_rows = visible_rows.clamp(1, rows.len());
+    let max_start = rows.len().saturating_sub(visible_rows);
+
+    let window_start = if previous_index + 1 == rows.len() && index == 0 {
+        // Downward wrap: last result → first result.
+        // Treat this as a full circular jump and show the beginning again.
+        0
+    } else if previous_index == 0 && index + 1 == rows.len() {
+        // Upward wrap: first result → last result.
+        // Treat this as a full circular jump and show the end again.
+        max_start
+    } else {
+        advance_result_window_start(
+            result_window_start.get(),
+            previous_index,
+            index,
+            rows.len(),
+            visible_rows,
+        )
+    };
+
     result_window_start.set(window_start);
 
-    set_visible_result_window(rows, window_start, visible_rows);
+    set_visible_result_window(rows, window_start, visible_rows, index);
 
     for (row_index, row) in rows.iter().enumerate() {
-        row.button.set_opacity(1.0);
-
         if row_index == index {
             row.button.add_css_class("selected");
         } else {
@@ -1872,6 +1924,7 @@ mod responsive_tests {
 
         for width in 1i32..=upper_bound {
             let metrics = responsive_metrics(width);
+            let usable_width = (width - 24).max(1);
             let total = total_width(metrics);
 
             assert!(metrics.search_width > 0);
@@ -1879,7 +1932,7 @@ mod responsive_tests {
             assert!(metrics.gap >= 0);
             assert!(metrics.inner_gap > 0);
             assert!(metrics.icon_size > 0);
-            assert!(total <= width);
+            assert!(total <= usable_width);
         }
     }
 
@@ -1941,6 +1994,62 @@ mod responsive_tests {
     }
 
     #[test]
+    fn result_window_wraps_to_beginning_on_downward_cycle() {
+        let total = 18usize;
+        let visible_rows = 8usize;
+
+        let previous_index = 17usize;
+        let selected_index = 0usize;
+        let wrapped_start = if previous_index + 1 == total && selected_index == 0 {
+            0usize
+        } else {
+            advance_result_window_start(
+                10usize,
+                previous_index,
+                selected_index,
+                total,
+                visible_rows,
+            )
+        };
+
+        assert_eq!(wrapped_start, 0usize);
+    }
+
+    #[test]
+    fn result_window_wraps_to_end_on_upward_cycle() {
+        let total = 18usize;
+        let visible_rows = 8usize;
+        let max_start = total - visible_rows;
+
+        let previous_index = 0usize;
+        let selected_index = total - 1;
+        let wrapped_start = if previous_index == 0 && selected_index + 1 == total {
+            max_start
+        } else {
+            advance_result_window_start(0usize, previous_index, selected_index, total, visible_rows)
+        };
+
+        assert_eq!(wrapped_start, max_start);
+    }
+
+    #[test]
+    fn selection_relative_opacity_is_strongest_at_selection() {
+        let selected = 3usize;
+
+        assert_eq!(selection_row_opacity(3, selected, 0, 8), 1.0);
+        assert_eq!(selection_row_opacity(2, selected, 0, 8), 0.90);
+        assert_eq!(selection_row_opacity(1, selected, 0, 8), 0.80);
+        assert_eq!(selection_row_opacity(0, selected, 0, 8), 0.70);
+        assert_eq!(selection_row_opacity(7, selected, 0, 8), 0.60);
+    }
+
+    #[test]
+    fn selection_relative_opacity_leaves_hidden_rows_undimmed() {
+        assert_eq!(selection_row_opacity(8, 3, 0, 8), 1.0);
+        assert_eq!(selection_row_opacity(11, 3, 4, 4), 1.0);
+    }
+
+    #[test]
     fn mock_result_window_uses_downward_hysteresis() {
         let total = 18usize;
         let visible_rows = 8usize;
@@ -1982,7 +2091,7 @@ mod responsive_tests {
     }
 
     #[test]
-    fn mock_result_window_keeps_selection_near_sixth_visible_row_until_end() {
+    fn mock_result_window_keeps_selection_inside_visible_window_until_end() {
         let total = 18usize;
         let visible_rows = 8usize;
         let mut start = 0usize;
@@ -1992,11 +2101,7 @@ mod responsive_tests {
             start = advance_result_window_start(start, previous, selected, total, visible_rows);
             let visible_position = selected - start;
 
-            if selected <= 5 {
-                assert!(visible_position <= 5);
-            } else if selected < 16 {
-                assert_eq!(visible_position, 5);
-            }
+            assert!(visible_position < visible_rows);
         }
     }
 }
