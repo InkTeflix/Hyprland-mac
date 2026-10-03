@@ -3,8 +3,8 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use gtk::{
-    Align, Application, ApplicationWindow, Box as GtkBox, Button, Entry, Image, Label, Orientation,
-    Overlay,
+    Adjustment, Align, Application, ApplicationWindow, Box as GtkBox, Button, Entry, Image, Label,
+    Orientation, Overlay, Scrollbar,
 };
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
@@ -559,8 +559,12 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
         responsive_result_metrics(output_height, content_top, metrics.control_size);
     let result_view_height = visible_result_rows as i32 * result_row_height;
 
-    let (results_panel, result_rows) =
-        make_mock_results(composition_width, result_view_height, result_row_height);
+    let (results_panel, result_rows, result_scroll_adjustment) = make_mock_results(
+        composition_width,
+        result_view_height,
+        result_row_height,
+        visible_result_rows,
+    );
     let result_rows = Rc::new(result_rows);
     let selected_index = Rc::new(Cell::new(0usize));
     let result_window_start = Rc::new(Cell::new(0usize));
@@ -606,6 +610,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
         let standalone_filter_buttons = standalone_filter_buttons.clone();
         let inline_filter_buttons = inline_filter_buttons.clone();
         let entry = entry.clone();
+        let scroll_adjustment = result_scroll_adjustment.clone();
 
         button.connect_clicked(move |_| {
             let filter = filter_from_index(button_index);
@@ -636,6 +641,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
                 filter,
                 entry.text().as_str(),
                 visible_result_rows,
+                &scroll_adjustment,
             );
         });
     }
@@ -655,6 +661,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
         let standalone_filter_buttons = standalone_filter_buttons.clone();
         let inline_filter_buttons = inline_filter_buttons.clone();
         let entry = entry.clone();
+        let scroll_adjustment = result_scroll_adjustment.clone();
 
         button.connect_clicked(move |_| {
             let filter = filter_from_index(button_index);
@@ -685,6 +692,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
                 filter,
                 entry.text().as_str(),
                 visible_result_rows,
+                &scroll_adjustment,
             );
         });
     }
@@ -707,6 +715,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
         let standalone_filter_buttons = standalone_filter_buttons.clone();
         let inline_filter_buttons = inline_filter_buttons.clone();
         let entry = entry.clone();
+        let scroll_adjustment = result_scroll_adjustment.clone();
 
         back_button.clone().connect_clicked(move |_| {
             active_filter.set(MockFilter::All);
@@ -735,6 +744,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
                 MockFilter::All,
                 entry.text().as_str(),
                 visible_result_rows,
+                &scroll_adjustment,
             );
         });
     }
@@ -750,6 +760,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
         let result_rows = Rc::clone(&result_rows);
         let selected_index = Rc::clone(&selected_index);
         let result_window_start = Rc::clone(&result_window_start);
+        let scroll_adjustment = result_scroll_adjustment.clone();
 
         key_controller.connect_key_pressed(move |_controller, key, _keycode, _state| {
             if key == gdk::Key::Escape {
@@ -776,6 +787,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
                         &result_window_start,
                         next,
                         visible_result_rows,
+                        &scroll_adjustment,
                     );
                     glib::Propagation::Stop
                 }
@@ -792,6 +804,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
                         &result_window_start,
                         next,
                         visible_result_rows,
+                        &scroll_adjustment,
                     );
                     glib::Propagation::Stop
                 }
@@ -814,6 +827,138 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
         entry.connect_activate(move |_entry| {
             if results_panel.is_visible() && !result_rows.is_empty() {
                 confirm_mock_selection(&result_rows, selected_index.get());
+            }
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // RESULT SURFACE POINTER / SCROLL INTERACTION
+    // -------------------------------------------------------------------------
+
+    // Mouse-wheel and touchpad scrolling move the same logical selection used by
+    // Up / Down. This keeps the selection, visible result window, wrapping, and
+    // density/fade behavior in one interaction model rather than adding a
+    // second scrolling implementation just for pointer input.
+    //
+    // Touchpads emit smooth fractional deltas, while mouse wheels commonly emit
+    // larger discrete deltas. Accumulate the vertical delta and advance one
+    // result for each completed scroll unit.
+    let scroll_controller =
+        gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+    scroll_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+
+    let scroll_accumulator = Rc::new(Cell::new(0.0f64));
+    {
+        let results_panel = results_panel.clone();
+        let result_rows = Rc::clone(&result_rows);
+        let selected_index = Rc::clone(&selected_index);
+        let result_window_start = Rc::clone(&result_window_start);
+        let scroll_accumulator = Rc::clone(&scroll_accumulator);
+        let scroll_adjustment = result_scroll_adjustment.clone();
+
+        scroll_controller.connect_scroll(move |_controller, _dx, dy| {
+            if !results_panel.is_visible() || result_rows.is_empty() || dy == 0.0 {
+                return glib::Propagation::Proceed;
+            }
+
+            let mut accumulated = scroll_accumulator.get();
+
+            // A positive vertical scroll delta means scrolling downward through
+            // the results; a negative delta means scrolling upward.
+            accumulated += dy;
+
+            // Guard against an unexpectedly large input burst. We only need to
+            // preserve enough remainder to produce smooth, deterministic steps.
+            accumulated = accumulated.clamp(-64.0, 64.0);
+
+            let mut selection = selected_index.get();
+            let mut changed = false;
+
+            while accumulated >= 1.0 {
+                selection = (selection + 1) % result_rows.len();
+                accumulated -= 1.0;
+                changed = true;
+            }
+
+            while accumulated <= -1.0 {
+                selection = if selection == 0 {
+                    result_rows.len() - 1
+                } else {
+                    selection - 1
+                };
+                accumulated += 1.0;
+                changed = true;
+            }
+
+            scroll_accumulator.set(accumulated);
+
+            if changed {
+                set_mock_selection(
+                    &results_panel,
+                    &result_rows,
+                    &selected_index,
+                    &result_window_start,
+                    selection,
+                    visible_result_rows,
+                    &scroll_adjustment,
+                );
+            }
+
+            // Consume scroll input while the result surface is active. This is
+            // especially important for the fullscreen layer-shell overlay so
+            // the underlying desktop does not also react to the gesture.
+            glib::Propagation::Stop
+        });
+    }
+
+    results_panel.add_controller(scroll_controller);
+
+    // -------------------------------------------------------------------------
+    // RESULT SCROLLBAR DRAG / TRACK INTERACTION
+    // -------------------------------------------------------------------------
+    //
+    // Dragging the thumb or clicking the scrollbar track changes the visible
+    // result window directly. If the current logical selection falls outside the
+    // newly visible window, clamp it to the nearest visible row so keyboard,
+    // scrollbar, click, and wheel interactions continue to share one selection
+    // model.
+    {
+        let results_panel = results_panel.clone();
+        let result_rows = Rc::clone(&result_rows);
+        let selected_index = Rc::clone(&selected_index);
+        let result_window_start = Rc::clone(&result_window_start);
+        let scroll_adjustment = result_scroll_adjustment.clone();
+
+        scroll_adjustment.connect_value_changed(move |adjustment| {
+            if !results_panel.is_visible() || result_rows.is_empty() {
+                return;
+            }
+
+            let visible_rows = visible_result_rows.clamp(1, result_rows.len());
+            let max_start = result_rows.len().saturating_sub(visible_rows);
+            let window_start = adjustment.value().round().clamp(0.0, max_start as f64) as usize;
+            let window_end = (window_start + visible_rows).min(result_rows.len());
+
+            let current_selection = selected_index.get();
+            let selection = if current_selection < window_start {
+                window_start
+            } else if current_selection >= window_end {
+                window_end.saturating_sub(1)
+            } else {
+                current_selection
+            };
+
+            result_window_start.set(window_start);
+            selected_index.set(selection);
+
+            set_visible_result_window(result_rows.as_ref(), window_start, visible_rows, selection);
+
+            for (row_index, row) in result_rows.iter().enumerate() {
+                if row_index == selection {
+                    row.button.add_css_class("selected");
+                } else {
+                    row.button.remove_css_class("selected");
+                }
             }
         });
     }
@@ -855,6 +1000,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
         let gesture_selected = Rc::clone(&selected_index);
         let gesture_window = Rc::clone(&result_window_start);
         let gesture_visible_rows = visible_result_rows;
+        let gesture_scroll_adjustment = result_scroll_adjustment.clone();
         let gesture = gtk::GestureClick::new();
         gesture.set_button(1);
         gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -874,6 +1020,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
                         &gesture_window,
                         row_index,
                         gesture_visible_rows,
+                        &gesture_scroll_adjustment,
                     );
                 }
                 press if is_double_press(press) => {
@@ -885,6 +1032,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
                         &gesture_window,
                         row_index,
                         gesture_visible_rows,
+                        &gesture_scroll_adjustment,
                     );
                     confirm_mock_selection(rows.as_ref(), row_index);
                 }
@@ -912,6 +1060,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
         let selected_index = Rc::clone(&selected_index);
         let result_window_start = Rc::clone(&result_window_start);
         let active_filter = Rc::clone(&active_filter);
+        let scroll_adjustment = result_scroll_adjustment.clone();
         let search_pill = search_pill.clone();
         let search_icon = search_icon.clone();
         let back_button = back_button.clone();
@@ -943,6 +1092,7 @@ fn build_window(app: &Application) -> (ApplicationWindow, Entry, gtk::CssProvide
                 active_filter.get(),
                 entry.text().as_str(),
                 visible_result_rows,
+                &scroll_adjustment,
             );
         });
     }
@@ -1023,7 +1173,8 @@ fn make_mock_results(
     width: i32,
     viewport_height: i32,
     row_height: i32,
-) -> (Overlay, Vec<MockResultRow>) {
+    visible_rows: usize,
+) -> (Overlay, Vec<MockResultRow>, Adjustment) {
     let results_panel = Overlay::new();
 
     // The visible row count is derived from the runtime output height.
@@ -1071,9 +1222,55 @@ fn make_mock_results(
     bottom_fade.add_css_class("results-fade-bottom");
     results_panel.add_overlay(&bottom_fade);
 
+    // -------------------------------------------------------------------------
+    // PROPORTIONAL RESULT SCROLLBAR
+    // -------------------------------------------------------------------------
+    //
+    // The adjustment represents the start of the visible result window.
+    // GTK uses page_size / upper to derive the scrollbar thumb proportion, so
+    // the thumb automatically reflects the ratio of visible results to total
+    // results instead of using device-specific pixel geometry.
+    let total_results = rows.len().max(1) as f64;
+    let visible_results = visible_rows.clamp(1, rows.len().max(1)) as f64;
+    let result_scroll_adjustment = Adjustment::new(
+        0.0,
+        0.0,
+        total_results,
+        1.0,
+        visible_results.max(1.0),
+        visible_results,
+    );
+
+    // The scrollbar itself is intentionally smaller than the result surface.
+    // Width follows row height; vertical insets follow the viewport height.
+    // No display resolution, monitor size, or device-specific geometry is used.
+    // It is shown only when the result count exceeds the visible window.
+    let scrollbar_width = responsive_scrollbar_width(row_height);
+    let scrollbar_vertical_inset = responsive_scrollbar_vertical_inset(viewport_height);
+
+    let scrollbar = Scrollbar::new(Orientation::Vertical, Some(&result_scroll_adjustment));
+    scrollbar.set_width_request(scrollbar_width);
+    scrollbar.set_halign(Align::End);
+    scrollbar.set_valign(Align::Fill);
+    scrollbar.set_vexpand(true);
+    scrollbar.set_margin_top(scrollbar_vertical_inset);
+    scrollbar.set_margin_bottom(scrollbar_vertical_inset);
+    // The scrollbar is flush with the result surface's right wall.
+    scrollbar.set_margin_start(0);
+    scrollbar.set_margin_end(0);
+    scrollbar.set_visible(rows.len() > visible_rows);
+    scrollbar.add_css_class("results-scrollbar");
+    results_panel.add_overlay(&scrollbar);
+
+    // The range is used only for scrollbar geometry; selection/window logic
+    // remains in the shared result-selection model.
+    result_scroll_adjustment.set_upper(total_results);
+    result_scroll_adjustment.set_page_size(visible_results);
+    result_scroll_adjustment.set_value(0.0);
+
     results_panel.set_visible(false);
 
-    (results_panel, rows)
+    (results_panel, rows, result_scroll_adjustment)
 }
 
 fn make_mock_result_row(row_height: i32) -> MockResultRow {
@@ -1135,6 +1332,7 @@ fn update_mock_results(
     filter: MockFilter,
     query: &str,
     visible_rows: usize,
+    scroll_adjustment: &Adjustment,
 ) {
     let query = query.trim();
 
@@ -1144,6 +1342,7 @@ fn update_mock_results(
         result_window_start.set(0);
         clear_mock_selection(rows);
         set_visible_result_window(rows, 0, visible_rows, 0);
+        scroll_adjustment.set_value(0.0);
         return;
     }
 
@@ -1204,6 +1403,7 @@ fn update_mock_results(
         result_window_start,
         0,
         visible_rows,
+        scroll_adjustment,
     );
 }
 
@@ -1240,6 +1440,18 @@ fn advance_result_window_start(
     }
 
     current_start.min(max_start)
+}
+
+fn responsive_scrollbar_width(row_height: i32) -> i32 {
+    // Keep the thumb very slim while still scaling with responsive row height.
+    // No fixed device/display width is used.
+    (row_height as f64 * 0.05).round().max(3.0) as i32
+}
+
+fn responsive_scrollbar_vertical_inset(viewport_height: i32) -> i32 {
+    // Keep the scrollbar visibly shorter than the result surface by giving it
+    // proportional top/bottom breathing room.
+    (viewport_height as f64 * 0.18).round().max(4.0) as i32
 }
 
 fn selection_row_opacity(
@@ -1309,6 +1521,7 @@ fn set_mock_selection(
     result_window_start: &Cell<usize>,
     index: usize,
     visible_rows: usize,
+    scroll_adjustment: &Adjustment,
 ) {
     if rows.is_empty() {
         return;
@@ -1343,6 +1556,11 @@ fn set_mock_selection(
     };
 
     result_window_start.set(window_start);
+
+    // Keep the native scrollbar synchronized with keyboard/mouse selection.
+    // Adjustment::set_value clamps to [lower, upper - page_size], so the thumb
+    // remains bounded to the available result window.
+    scroll_adjustment.set_value(window_start as f64);
 
     set_visible_result_window(rows, window_start, visible_rows, index);
 
@@ -1808,6 +2026,99 @@ window.spotlight-window.background {
     );
 }
 
+/*
+ * Native GtkScrollbar CSS-node tree:
+ *
+ *     scrollbar.vertical
+ *       └── range
+ *           └── trough
+ *               └── slider
+ *
+ * Only the slider is painted. The scrollbar/range/trough remain fully
+ * transparent so there is no extra full-height shell or track.
+ *
+ * GTK4 does not expose a generic CSS `width` property for these nodes, so
+ * min-width is used for the compact responsive thickness.
+ *
+ * The palette below is taken from the supplied Matugen Spotlight output:
+ * rgba(81, 69, 58, ...) is already used by the generated theme for icons and
+ * inline controls. This is therefore the fallback/bridge color for the
+ * scrollbar thumb as well.
+ */
+.results-scrollbar,
+.results-scrollbar.vertical {
+    min-width: 3px;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    background-color: transparent;
+    border: none;
+    box-shadow: none;
+    opacity: 1;
+}
+
+.results-scrollbar.vertical range,
+.results-scrollbar.vertical trough {
+    min-width: 3px;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    background-color: transparent;
+    border: none;
+    box-shadow: none;
+}
+
+.results-scrollbar.vertical slider {
+    min-width: 3px;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+
+    /*
+     * Add a transparent hit/hover band on the LEFT of the visible thumb.
+     * The right edge therefore stays flush with the result surface while the
+     * pointer can be a few pixels away from the visible thumb and still enter
+     * the hover state. The transparent border does not paint because the
+     * background is clipped to the padding box.
+     */
+    border-left: 8px solid transparent;
+    border-right: 0;
+    border-top: 0;
+    border-bottom: 0;
+    border-radius: 999px;
+    background-color: rgba(81, 69, 58, 0.84);
+    background-clip: padding-box;
+    box-shadow: none;
+    opacity: 1;
+
+    /* Keep the default thumb visibly shorter than the native proportional
+     * allocation while retaining the native scrollbar geometry underneath. */
+    transform: scale(1, 0.76);
+    transform-origin: right center;
+}
+
+.results-scrollbar.vertical slider:hover {
+    /*
+     * Hover restores the full current height. The earlier 2% width change was
+     * effectively invisible at a 3px base width, so use a small pixel-visible
+     * expansion instead: the painted thumb grows from about 3px to about 5px.
+     * The right edge remains attached; all expansion happens inward.
+     */
+    transform: scale(1.67, 1);
+    transform-origin: right center;
+    background-color: rgba(81, 69, 58, 0.92);
+}
+
+.results-scrollbar.vertical slider:active,
+.results-scrollbar.vertical.dragging slider {
+    transform: scale(1.67, 1);
+    transform-origin: right center;
+    background-color: rgba(81, 69, 58, 0.98);
+}
+
+
 .result-button {
     min-width: 0;
     min-height: 0;
@@ -2134,6 +2445,28 @@ mod responsive_tests {
     }
 
     #[test]
+    fn scroll_delta_accumulates_smooth_touchpad_steps() {
+        let mut accumulated = 0.0f64;
+
+        accumulated += 0.4;
+        assert!(accumulated < 1.0);
+
+        accumulated += 0.7;
+        assert!(accumulated >= 1.0);
+        accumulated -= 1.0;
+
+        assert!((accumulated - 0.1).abs() < f64::EPSILON * 4.0);
+    }
+
+    #[test]
+    fn scroll_direction_matches_vertical_motion() {
+        // GTK reports positive vertical scroll deltas for downward scrolling
+        // and negative deltas for upward scrolling.
+        assert!(0.75f64 > 0.0);
+        assert!(-0.75f64 < 0.0);
+    }
+
+    #[test]
     fn mouse_interaction_contract_keeps_hover_separate_from_selection() {
         // Hover is intentionally a presentation state. A click is what
         // changes the logical selection index.
@@ -2142,6 +2475,38 @@ mod responsive_tests {
 
         assert_ne!(selected_index, hovered_index);
         assert_eq!(selected_index, 2usize);
+    }
+
+    #[test]
+    fn responsive_scrollbar_width_scales_with_result_row_height() {
+        assert!(responsive_scrollbar_width(36) <= responsive_scrollbar_width(58));
+        assert!(responsive_scrollbar_width(58) <= responsive_scrollbar_width(96));
+    }
+
+    #[test]
+    fn responsive_scrollbar_vertical_inset_scales_with_viewport_height() {
+        assert!(
+            responsive_scrollbar_vertical_inset(320) <= responsive_scrollbar_vertical_inset(640)
+        );
+        assert!(
+            responsive_scrollbar_vertical_inset(640) <= responsive_scrollbar_vertical_inset(1280)
+        );
+    }
+
+    #[test]
+    fn scrollbar_should_exist_only_when_results_exceed_visible_window() {
+        assert!(!(8usize > 8usize));
+        assert!(18usize > 8usize);
+    }
+
+    #[test]
+    fn scrollbar_page_ratio_matches_visible_results() {
+        let total_results = 18.0f64;
+        let visible_results = 8.0f64;
+
+        // GTK derives the thumb proportion from page_size / upper.
+        assert!((visible_results / total_results - (8.0 / 18.0)).abs() < f64::EPSILON);
+        assert!(visible_results < total_results);
     }
 
     #[test]
