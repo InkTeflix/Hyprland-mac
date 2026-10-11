@@ -7,3 +7,4 @@ rust-version = "1.85"
 [dependencies]
 gtk = { package = "gtk4", version = "0.11" }
 gtk4-layer-shell = "0.8"
+gdk-pixbuf = "0.22"
